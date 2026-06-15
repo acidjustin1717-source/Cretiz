@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cretyz Brawl</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background: #111; font-family: sans-serif; }
+        
+        /* [1] 로그인 화면 스타일 */
+        #loginScreen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: linear-gradient(135deg, #1e1e2f, #11111e); z-index: 99999;
+        }
+        .login-box {
+            background: rgba(255, 255, 255, 0.05); padding: 40px; border-radius: 12px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center; width: 90%; max-width: 400px; color: white;
+        }
+        .login-box h1 { margin-bottom: 24px; font-size: 2.5rem; color: #00ffcc; }
+        .login-box input {
+            width: 100%; padding: 12px; margin-bottom: 20px; border: none; border-radius: 6px;
+            background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 1rem; text-align: center;
+        }
+        .login-box button {
+            width: 100%; padding: 12px; border: none; border-radius: 6px;
+            background: #00ffcc; color: #111; font-size: 1rem; font-weight: bold; cursor: pointer;
+        }
+
+        /* [2] 게임 전용 화면 스타일 (처음엔 완전히 숨겨둠) */
+        #gameScreen { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            display: none; /* 로그인 전에는 아예 보이지도 않게 처리 */
+            z-index: 1; 
+        }
+        #gameCanvas { width: 100%; height: 100%; display: block; }
+        #uiOverlay { position: absolute; top: 20px; left: 20px; font-size: 1.2rem; color: #00ffcc; z-index: 10; font-weight: bold; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <div id="loginScreen">
+        <div class="login-box">
+            <h1>CRETYZ</h1>
+            <div style="display: flex; margin-bottom: 20px; border-bottom: 2px solid rgba(255,255,255,0.1);">
+                <div id="goLogin" style="flex: 1; padding: 10px; cursor: pointer; color: #00ffcc; font-weight: bold;">로그인</div>
+                <div id="goRegister" style="flex: 1; padding: 10px; cursor: pointer; color: #aaa;">회원가입</div>
+            </div>
+            <input type="text" id="myId" placeholder="아이디를 입력하세요">
+            <input type="password" id="myPw" placeholder="비밀번호를 입력하세요">
+            <div id="msg" style="color: #ff4444; font-size: 0.9rem; margin-bottom: 15px; min-height: 20px;"></div>
+            <button id="mainBtn">로그인</button>
+        </div>
+    </div>
+
+    <div id="gameScreen">
+        <div id="uiOverlay">PLAYER: <span id="playerTagName">-</span></div>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        // --- [Part 1: 로그인 시스템 및 화면 전환 로직] ---
+        const goLogin = document.getElementById('goLogin');
+        const goRegister = document.getElementById('goRegister');
+        const myId = document.getElementById('myId');
+        const myPw = document.getElementById('myPw');
+        const mainBtn = document.getElementById('mainBtn');
+        const msg = document.getElementById('msg');
+        const loginScreen = document.getElementById('loginScreen');
+        const gameScreen = document.getElementById('gameScreen');
+        const playerTagName = document.getElementById('playerTagName');
+
+        let mode = 'login';
+
+        goLogin.addEventListener('click', () => { mode = 'login'; goLogin.style.color = '#00ffcc'; goRegister.style.color = '#aaa'; mainBtn.innerText = '로그인'; msg.innerText = ''; });
+        goRegister.addEventListener('click', () => { mode = 'register'; goRegister.style.color = '#00ffcc'; goLogin.style.color = '#aaa'; mainBtn.innerText = '회원가입 완료'; msg.innerText = ''; });
+
+        mainBtn.addEventListener('click', () => {
+            const id = myId.value.trim();
+            const pw = myPw.value.trim();
+            if (!id || !pw) { msg.innerText = '모두 입력해주세요!'; return; }
+
+            if (mode === 'register') {
+                if (localStorage.getItem('user_' + id)) { msg.innerText = '이미 존재하는 아이디입니다.'; }
+                else { localStorage.setItem('user_' + id, pw); msg.style.color = '#00ffcc'; msg.innerText = '가입 완료! 로그인 해주세요.'; goLogin.click(); }
+            } else {
+                if (localStorage.getItem('user_' + id) === pw) {
+                    // [핵심] 로그인 화면 완전히 지우고, 게임 화면 강제로 켜기!
+                    loginScreen.style.display = 'none';
+                    gameScreen.style.display = 'block'; 
+                    playerTagName.innerText = id;
+                    
+                    // 화면 켜진 뒤에 안전하게 게임 엔진 시작!
+                    initGame(); 
+                } else { msg.style.color = '#ff4444'; msg.innerText = '아이디 또는 비밀번호가 틀렸습니다.'; }
+            }
+        });
+
+        // --- [Part 2: 2D 액션 게임 소스 코드] ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        let player = { x: 300, y: 300, radius: 20, speed: 5, color: '#00ffcc' };
+        let bullets = [];
+        let keys = {};
+
+        window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+        window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+        // 마우스 클릭 시 총알 발사
+        window.addEventListener('click', (e) => {
+            // 게임 스크린이 열려 있을 때만 마우스 발사 작동하게 가드 침
+            if (gameScreen.style.display === 'block') {
+                let dx = e.clientX - player.x;
+                let dy = e.clientY - player.y;
+                let angle = Math.atan2(dy, dx);
+
+                bullets.push({
+                    x: player.x,
+                    y: player.y,
+                    radius: 5,
+                    vx: Math.cos(angle) * 10,
+                    vy: Math.sin(angle) * 10,
+                    color: '#ff0055'
+                });
+            }
+        });
+
+        function initGame() {
+            // 캔버스 크기를 현재 브라우저 창 크기에 맞춤
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gameLoop();
+        }
+
+        function update() {
+            if (keys['w'] || keys['arrowup']) player.y -= player.speed;
+            if (keys['s'] || keys['arrowdown']) player.y += player.speed;
+            if (keys['a'] || keys['arrowleft']) player.x -= player.speed;
+            if (keys['d'] || keys['arrowright']) player.x += player.speed;
+
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                bullets[i].x += bullets[i].vx;
+                bullets[i].y += bullets[i].vy;
+
+                if (bullets[i].x < 0 || bullets[i].x > canvas.width || bullets[i].y < 0 || bullets[i].y > canvas.height) {
+                    bullets.splice(i, 1);
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 배경 격자선
+            ctx.strokeStyle = '#222';
+            for (let i = 0; i < canvas.width; i += 40) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
+            for (let i = 0; i < canvas.height; i += 40) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke(); }
+
+            // 총알 그리기
+            bullets.forEach(bullet => {
+                ctx.fillStyle = bullet.color;
+                ctx.beginPath();
+                ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // 플레이어 그리기 (네온 원)
+            ctx.fillStyle = player.color;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = player.color;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.addEventListener('resize', () => {
+            if (gameScreen.style.display === 'block') {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+        });
+    </script>
+</body>
+</html>
