@@ -63,3 +63,97 @@
 </body>
 </html>
 
+<style>
+    #loginScreen {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        display: flex; flex-direction: column; justify-content: center; align-items: center;
+        background: linear-gradient(135deg, #1e1e2f, #11111e); z-index: 99999;
+    }
+    .login-box {
+        background: rgba(255, 255, 255, 0.05); padding: 40px; border-radius: 12px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); border: 1px solid rgba(255, 255, 255, 0.1);
+        text-align: center; width: 90%; max-width: 400px; color: white; font-family: sans-serif;
+    }
+    .login-box h1 { margin-bottom: 24px; font-size: 2.5rem; color: #00ffcc; }
+    .login-box input {
+        width: 100%; padding: 12px; margin-bottom: 20px; border: none; border-radius: 6px;
+        background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 1rem; text-align: center;
+    }
+    .login-box button {
+        width: 100%; padding: 12px; border: none; border-radius: 6px;
+        background: #00ffcc; color: #111; font-size: 1rem; font-weight: bold; cursor: pointer;
+    }
+</style>
+
+<div id="loginScreen">
+    <div class="login-box">
+        <h1 id="mainTitle">CRETYZ</h1>
+        <div style="display: flex; margin-bottom: 20px; border-bottom: 2px solid rgba(255,255,255,0.1);">
+            <div id="goLogin" style="flex: 1; padding: 10px; cursor: pointer; color: #00ffcc; font-weight: bold;">로그인</div>
+            <div id="goRegister" style="flex: 1; padding: 10px; cursor: pointer; color: #aaa;">회원가입</div>
+        </div>
+        <input type="text" id="myId" placeholder="아이디를 입력하세요">
+        <input type="password" id="myPw" placeholder="비밀번호를 입력하세요">
+        <div id="msg" style="color: #ff4444; font-size: 0.9rem; margin-bottom: 15px; min-height: 20px;"></div>
+        <button id="mainBtn">로그인</button>
+    </div>
+</div>
+
+<script>
+    const goLogin = document.getElementById('goLogin');
+    const goRegister = document.getElementById('goRegister');
+    const myId = document.getElementById('myId');
+    const myPw = document.getElementById('myPw');
+    const mainBtn = document.getElementById('mainBtn');
+    const msg = document.getElementById('msg');
+    const loginScreen = document.getElementById('loginScreen');
+    const mainTitle = document.getElementById('mainTitle');
+
+    // 브라우저 타이틀도 자동 변경
+    document.title = "Cretyz - Login";
+    mainTitle.innerText = "CRETYZ";
+
+    let mode = 'login';
+
+    goLogin.addEventListener('click', () => {
+        mode = 'login';
+        goLogin.style.color = '#00ffcc'; goRegister.style.color = '#aaa';
+        mainBtn.innerText = '로그인'; msg.innerText = '';
+    });
+
+    goRegister.addEventListener('click', () => {
+        mode = 'register';
+        goRegister.style.color = '#00ffcc'; goLogin.style.color = '#aaa';
+        mainBtn.innerText = '회원가입 완료'; msg.innerText = '';
+    });
+
+    mainBtn.addEventListener('click', () => {
+        const id = myId.value.trim();
+        const pw = myPw.value.trim();
+
+        if (!id || !pw) {
+            msg.innerText = '모두 입력해주세요!';
+            return;
+        }
+
+        if (mode === 'register') {
+            if (localStorage.getItem('game_user_' + id)) {
+                msg.innerText = '이미 존재하는 아이디입니다.';
+            } else {
+                localStorage.setItem('game_user_' + id, pw);
+                msg.style.color = '#00ffcc';
+                msg.innerText = '가입 완료! 로그인 탭으로 이동합니다.';
+                goLogin.click();
+            }
+        } else {
+            if (localStorage.getItem('game_user_' + id) === pw) {
+                loginScreen.style.display = 'none'; // 로그인 창 파괴! 원래 게임 등장!
+                document.title = "Cretyz Brawl";
+                alert(id + '님 환영합니다!');
+            } else {
+                msg.style.color = '#ff4444';
+                msg.innerText = '아이디 또는 비밀번호가 틀렸습니다.';
+            }
+        }
+    });
+</script>
