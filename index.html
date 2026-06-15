@@ -309,3 +309,65 @@
         }
     });
 </script>
+<script>
+    // 기존의 단순했던 3D 플레이어 상자를 멋진 로봇 그룹으로 교체하는 치트키 코드
+    const upgradeCharacterInterval = setInterval(() => {
+        // 앞서 만들어진 3D 무대(scene)와 플레이어 변수(pBox3D)가 준비되었는지 확인
+        if (typeof scene !== 'undefined' && pBox3D) {
+            clearInterval(upgradeCharacterInterval); // 찾았으면 반복 감지 종료
+
+            // 1. 기존의 못생긴 통상자는 무대에서 완전히 제거!
+            scene.remove(pBox3D);
+
+            // 2. 여러 부품을 하나로 묶어줄 로봇 그룹(Group) 생성
+            const robotCharacter = new THREE.Group();
+
+            // 부품 A: [몸통] 세련된 다크 그레이 메탈 상자
+            const bodyGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x22252a, metalness: 0.8, roughness: 0.2 });
+            const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+            bodyMesh.position.y = 0.35;
+            robotCharacter.add(bodyMesh);
+
+            // 부품 B: [머리] 주인공의 상징, 네온 블루 빛이 감도는 상자
+            const headGeo = new THREE.BoxGeometry(0.5, 0.4, 0.5);
+            const headMat = new THREE.MeshStandardMaterial({ color: 0x00aaff, roughness: 0.1 });
+            const headMesh = new THREE.Mesh(headGeo, headMat);
+            headMesh.position.y = 0.9; // 몸통 위로 올리기
+            robotCharacter.add(headMesh);
+
+            // 부품 C: [빛나는 고글/눈] 가로로 긴 네온 그린 고글
+            const eyeGeo = new THREE.BoxGeometry(0.4, 0.1, 0.1);
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc }); // 빛 효과를 위해 Basic 재질 사용
+            const eyeMesh = new THREE.Mesh(eyeGeo, eyeMat);
+            eyeMesh.position.set(0, 0.95, 0.21); // 머리 앞쪽에 착 붙이기
+            robotCharacter.add(eyeMesh);
+
+            // 부품 D: [제트팩] 로봇 등에 장착된 네온 핑크 원통 배낭
+            const jetGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.5, 8);
+            const jetMat = new THREE.MeshStandardMaterial({ color: 0xff0055, metalness: 0.5 });
+            
+            const leftJet = new THREE.Mesh(jetGeo, jetMat);
+            leftJet.position.set(-0.25, 0.4, -0.4); // 왼쪽 등에 배치
+            leftJet.rotation.x = Math.PI / 6; // 살짝 역동적인 각도
+            robotCharacter.add(leftJet);
+
+            const rightJet = new THREE.Mesh(jetGeo, jetMat);
+            rightJet.position.set(0.25, 0.4, -0.4); // 오른쪽 등에 배치
+            rightJet.rotation.x = Math.PI / 6;
+            robotCharacter.add(rightJet);
+
+            // 3. 새로 만든 간지 폭발 로봇을 무대에 추가!
+            scene.add(robotCharacter);
+
+            // 4. 기존 2D 좌표 동기화 루프의 대상을 이 새 로봇으로 가로채기!
+            // 매 프레임 도는 애니메이션 내부에서 robotCharacter를 제어하도록 덮어씁니다.
+            const 원래애니메이션 = requestAnimationFrame;
+            
+            // 기존 플레이어 변수 자체를 우리가 만든 로봇 그룹으로 바꿔치기해서 기존 코드랑 호환시킴
+            pBox3D = robotCharacter;
+            
+            console.log("Cretyz 전용 '네온 전투 로봇' 캐릭터 스킨 적용 완료!");
+        }
+    }, 200);
+</script>
