@@ -157,3 +157,30 @@
         }
     });
 </script>
+    // -----------------------------------------------------------------
+    // [로그인 후 게임 화면 강제 전환 및 리사이즈 초기화]
+    // -----------------------------------------------------------------
+    function initGameScreen() {
+        const gameCanvas = document.getElementById('gameCanvas');
+        if (gameCanvas) {
+            // 1. 게임 캔버스 크기를 현재 브라우저 화면에 꽉 맞추기
+            gameCanvas.width = window.innerWidth;
+            gameCanvas.height = window.innerHeight;
+            
+            // 2. 혹시 기존 게임에 resize 이벤트가 있다면 강제로 발생시켜주기
+            window.dispatchEvent(new Event('resize'));
+            
+            console.log("게임 화면 전환 및 캔버스 초기화 완료!");
+        }
+    }
+
+    // 위에 작성했던 로그인 성공 로직에 이 함수를 강제로 끼워넣기 위해 이벤트 추가
+    mainBtn.addEventListener('click', () => {
+        const id = myId.value.trim();
+        const pw = myPw.value.trim();
+        
+        if (id && pw && localStorage.getItem('game_user_' + id) === pw) {
+            // 로그인 성공 시점에 게임 화면을 깨우는 함수 실행!
+            setTimeout(initGameScreen, 50); 
+        }
+    });
