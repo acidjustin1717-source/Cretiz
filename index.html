@@ -371,3 +371,20 @@
         }
     }, 200);
 </script>
+<script>
+    const fixCharacterInterval = setInterval(() => {
+        // 기존 2D 플레이어(pChar) 오브젝트가 있는지 확인
+        if (typeof pChar !== 'undefined') {
+            clearInterval(fixCharacterInterval);
+
+            // 1. 2D 초록색 원을 완전히 투명하게 만들어서 숨기기!
+            pChar.color = 'rgba(0, 0, 0, 0)'; 
+
+            // 2. 3D 로봇이 화면 한가운데서 시작하도록 2D 기본 위치를 화면 중앙으로 강제 세팅
+            pChar.x = window.innerWidth / 2;
+            pChar.y = window.innerHeight / 2;
+
+            console.log("초록색 2D 원 숨기기 및 3D 로봇 중심점 정렬 완료!");
+        }
+    }, 200);
+</script>
