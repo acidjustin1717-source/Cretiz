@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>듀얼 액션 체스 — Dual Action Chess</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#060912;
+    --panel:#0c1320ee;
+    --panel-border:#1c3b4a;
+    --cyan:#2fd0ff;
+    --cyan-dim:#1a6f87;
+    --magenta:#ff2f6e;
+    --magenta-dim:#8a1c3c;
+    --move-green:#00ffcc;
+    --atk-pink:#ff0055;
+    --gold:#ffd700;
+    --violet:#b366ff;
+    --text:#dfeaf2;
+    --text-dim:#7e93a3;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:var(--bg); color:var(--text);
+    font-family:'Share Tech Mono', monospace;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:none;
+  }
+  #gameCanvas{position:absolute; inset:0; display:block;}
+
+  .hud{position:absolute; z-index:50; pointer-events:none;}
+  .hudbox{pointer-events:auto;}
+
+  /* ---------- Scoreboard ---------- */
+  #scoreboard{
+    top:10px; left:10px; right:10px;
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel); border:1px solid var(--panel-border);
+    border-radius:10px; padding:8px 14px; gap:8px;
+    box-shadow:0 0 18px #00ffcc22, inset 0 0 20px #00141a;
+    backdrop-filter:blur(4px);
+  }
+  .score-side{display:flex; flex-direction:column; align-items:center; min-width:64px;}
+  .score-label{font-family:'Orbitron',sans-serif; font-size:10px; letter-spacing:2px; color:var(--text-dim);}
+  .score-val{font-family:'Orbitron',sans-serif; font-size:24px; font-weight:900;}
+  #scoreWhite{color:var(--cyan); text-shadow:0 0 10px var(--cyan);}
+  #scoreBlack{color:var(--magenta); text-shadow:0 0 10px var(--magenta);}
+  .turn-center{display:flex; flex-direction:column; align-items:center;}
+  #turnCounter{font-family:'Orbitron',sans-serif; font-size:13px; color:var(--gold); letter-spacing:1px;}
+  #winCond{font-size:9px; color:var(--text-dim); letter-spacing:1px; margin-top:2px;}
+
+  /* ---------- status / log strip ---------- */
+  #statusBar{
+    top:62px; left:10px; right:10px;
+    background:var(--panel); border:1px solid var(--panel-border); border-radius:8px;
+    padding:6px 12px; font-size:12px; color:var(--text); min-height:18px;
+    box-shadow:0 0 12px #00000055;
+  }
+  #logPanel{
+    top:96px; left:10px; width:min(260px,42vw);
+    max-height:30vh; overflow-y:auto;
+    background:var(--panel); border:1px solid var(--panel-border); border-radius:8px;
+    padding:6px 10px; font-size:10.5px; line-height:1.5; color:var(--text-dim);
+  }
+  #logPanel .lg{display:block; border-bottom:1px solid #ffffff0c; padding:2px 0;}
+  #logPanel .lg.kill{color:var(--gold);}
+  #logPanel .lg.warn{color:var(--magenta);}
+
+  /* ---------- bottom action sheet ---------- */
+  #actionSheet{
+    left:10px; right:10px; bottom:10px;
+    background:var(--panel); border:1px solid var(--panel-border); border-radius:14px;
+    padding:12px; display:none; box-shadow:0 0 24px #000a;
+  }
+  #actionSheet.show{display:block;}
+  #sheetTitle{font-family:'Orbitron',sans-serif; font-size:12px; letter-spacing:1px; color:var(--gold); margin-bottom:8px;}
+  #sheetSub{font-size:11px; color:var(--text-dim); margin-bottom:8px;}
+  .btnRow{display:flex; flex-wrap:wrap; gap:8px;}
+  .actBtn{
+    flex:1 1 auto; min-width:72px; padding:10px 8px; text-align:center;
+    background:#0e1a26; border:1px solid var(--cyan-dim); color:var(--text);
+    border-radius:8px; font-family:'Share Tech Mono',monospace; font-size:12px;
+    cursor:pointer; transition:.15s;
+  }
+  .actBtn:active{transform:scale(0.96);}
+  .actBtn.disabled{opacity:.32; pointer-events:none; filter:grayscale(1);}
+  .actBtn.primary{background:linear-gradient(135deg,#0a2a1f,#06140f); border-color:var(--move-green); color:var(--move-green);}
+  .actBtn.danger{background:linear-gradient(135deg,#2a0a14,#140609); border-color:var(--atk-pink); color:var(--atk-pink);}
+  .actBtn.cancel{border-color:#444; color:#999;}
+  .actBtn.confirm{border-color:var(--gold); color:var(--gold);}
+
+  #queuedRow{display:flex; gap:6px; margin-top:10px; font-size:10.5px; color:var(--text-dim);}
+  .qchip{border:1px solid var(--panel-border); border-radius:6px; padding:3px 8px;}
+  .qchip.filled{border-color:var(--gold); color:var(--gold);}
+
+  /* ---------- pass screen ---------- */
+  #passScreen{
+    inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
+    background:#000000ee; text-align:center; padding:20px;
+  }
+  #passScreen.show{display:flex;}
+  #passTitle{font-family:'Orbitron',sans-serif; font-size:20px; margin-bottom:10px;}
+  #passSub{font-size:13px; color:var(--text-dim); max-width:320px; margin-bottom:24px; line-height:1.6;}
+  .bigBtn{
+    font-family:'Orbitron',sans-serif; font-size:14px; letter-spacing:1px; padding:14px 28px;
+    border-radius:10px; border:1px solid var(--gold); color:var(--gold); background:#1a1404;
+    cursor:pointer;
+  }
+
+  /* ---------- win screen ---------- */
+  #winScreen{
+    inset:0; display:none; align-items:center; justify-content:center; flex-direction:column;
+    background:#000000f2; text-align:center; padding:20px;
+  }
+  #winScreen.show{display:flex;}
+  #winTitle{font-family:'Orbitron',sans-serif; font-size:30px; margin-bottom:14px; text-shadow:0 0 20px currentColor;}
+  #winSub{font-size:14px; color:var(--text-dim); margin-bottom:26px;}
+
+  /* ---------- help ---------- */
+  #helpBtn{position:absolute; z-index:60; top:10px; right:10px; width:0; height:0;}
+  #toast{
+    position:absolute; z-index:80; left:50%; top:46%; transform:translate(-50%,-50%);
+    background:#000c; border:1px solid var(--atk-pink); color:var(--atk-pink);
+    padding:10px 18px; border-radius:8px; font-size:13px; display:none; pointer-events:none;
+  }
+
+  #introScreen{
+    inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column;
+    background:radial-gradient(circle at 50% 30%,#0d1b22,#020306 70%); text-align:center; padding:24px; z-index:90;
+  }
+  #introScreen h1{font-family:'Orbitron',sans-serif; font-size:26px; color:var(--cyan); text-shadow:0 0 18px var(--cyan); margin:0 0 6px;}
+  #introScreen h1 span{color:var(--magenta); text-shadow:0 0 18px var(--magenta);}
+  #introScreen p{font-size:12.5px; color:var(--text-dim); max-width:340px; line-height:1.7; margin:4px 0 22px;}
+  #introScreen ul{font-size:11.5px; color:var(--text-dim); text-align:left; max-width:340px; line-height:1.8; margin:0 0 22px; padding-left:18px;}
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<!-- INTRO -->
+<div id="introScreen" class="hud hudbox">
+  <h1>DUAL ACTION <span>CHESS</span></h1>
+  <p>매 턴 기물 하나를 골라 행동 2개를 비밀리에 예약합니다. 양쪽이 준비를 마치면 정해진 순서대로 동시 결산됩니다. 27점을 먼저 모으거나, 50턴 종료 시 더 높은 점수를 가진 쪽이 승리합니다.</p>
+  <ul>
+    <li>한 기기로 번갈아 플레이하는 핫시트 모드입니다. 상대 차례에는 화면을 넘겨주세요.</li>
+    <li>기물 탭 → 행동1 선택 → 목표 타일(네온 고리) 탭 → 행동2 반복</li>
+    <li>킹을 죽여도 게임은 끝나지 않습니다 (+8점만 획득)</li>
+  </ul>
+  <div class="bigBtn" id="startGameBtn">게임 시작 ▶</div>
+</div>
+
+<!-- HUD -->
+<div id="scoreboard" class="hud hudbox">
+  <div class="score-side"><div class="score-label">WHITE</div><div class="score-val" id="scoreWhite">0</div></div>
+  <div class="turn-center">
+    <div id="turnCounter">TURN 1 / 50</div>
+    <div id="winCond">🏆 27점 선취 또는 50턴 종료 시 고득점 승</div>
+  </div>
+  <div class="score-side"><div class="score-label">BLACK</div><div class="score-val" id="scoreBlack">0</div></div>
+</div>
+
+<div id="statusBar" class="hud hudbox">📋 준비 중...</div>
+<div id="logPanel" class="hud hudbox"></div>
+
+<div id="toast" class="hud"></div>
+
+<!-- bottom action sheet -->
+<div id="actionSheet" class="hud hudbox">
+  <div id="sheetTitle">행동 선택</div>
+  <div id="sheetSub"></div>
+  <div class="btnRow" id="actionBtnRow"></div>
+  <div id="queuedRow">
+    <div class="qchip" id="chip0">행동1: -</div>
+    <div class="qchip" id="chip1">행동2: -</div>
+  </div>
+</div>
+
+<!-- pass-device screen (hidden info) -->
+<div id="passScreen" class="hud hudbox">
+  <div id="passTitle"></div>
+  <div id="passSub"></div>
+  <div class="bigBtn" id="passBtn"></div>
+</div>
+
+<!-- win screen -->
+<div id="winScreen" class="hud hudbox">
+  <div id="winTitle"></div>
+  <div id="winSub"></div>
+  <div class="bigBtn" id="restartBtn">다시 시작 ↺</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =========================================================================
+   DUAL ACTION CHESS — full standalone implementation
+   Rules source: user-provided spec (폰/슈퍼폰/히어로폰/나이트/비숍/룩/퀸/킹,
+   충돌, 벽, 결산 순서, 승리조건, 점수표)
+
+   DESIGN NOTES / ASSUMPTIONS (documented since the original spec leaves
+   a few implementation details unspecified):
+   - Hotseat 2-player on one device. A "pass screen" hides each side's
+     reservation from the other, simulating simultaneous secret orders.
+   - Board: standard chess starting layout, White on row 0 (advances +row),
+     Black on row 7 (advances -row). Camera is fixed (not rotated per turn).
+   - "Move" targets must land on an empty, non-wall tile (capturing is only
+     ever done via the separate Attack action, never by moving onto a piece).
+   - Rook's 2-square move requires both the middle and destination tile to
+     be empty (path is checked); Rook's 2-square ATTACK has no line-of-sight
+     requirement, matching the literal "정확히 2칸 떨어진 위치 중 1칸 선택" wording.
+   - Collision is checked between the two sides' SAME action-slot index
+     (action1 vs action1, action2 vs action2) before either resolves, since
+     the rulebook's own "예외 연산" doc frames it as a same-step comparison.
+   - A collision-stunned piece also forfeits the rest of that turn's queued
+     actions (not just next turn's eligibility), since reeling from impact
+     mid-turn narratively shouldn't let it still complete a planned attack.
+   - Cooldowns (Bishop reload, Queen reload) tick down by 1 at the start of
+     every global turn, regardless of whether that piece acted.
+   - Walls always fully clear at the start of the turn after they're created.
+   - Queen's "정면/좌측 대각선/우측 대각선" are relative to each side's forward
+     direction (White forward = +row, Black forward = -row); diagonal-left/
+     right are mirrored accordingly since Black faces the opposite way.
+   - If a Super Pawn later evolves into a Hero Pawn, Hero Pawn scoring (3pt)
+     takes precedence over Super Pawn scoring (2pt) since evolution is the
+     more recent, higher-tier state and the spec doesn't address overlap.
+   ========================================================================= */
+
+// ---------------------------------------------------------------- CONSTANTS
+const ROWS=8, COLS=8, TILE=1.25;
+const NEI8 = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+const KNIGHT_OFFS = [[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]];
+const ORTHO4 = [[1,0],[-1,0],[0,1],[0,-1]];
+const DIAG4  = [[1,1],[1,-1],[-1,1],[-1,-1]];
+const ALL8DIR = ORTHO4.concat(DIAG4);
+const FORWARD   = {white:[1,0],  black:[-1,0]};
+const DIAG_LEFT = {white:[1,-1], black:[-1,1]};
+const DIAG_RIGHT= {white:[1,1],  black:[-1,-1]};
+
+const COLOR_HEX = {white:0x2fd0ff, black:0xff2f6e};
+const MOVE_RING_COLOR = 0x00ffcc;
+const ATK_RING_COLOR  = 0xff0055;
+const WALL_COLOR = 0xffaa00;
+const SUPER_GLOW = 0xffd700;
+const HERO_GLOW  = 0xb366ff;
+
+const SCORE_TABLE = {pawn:1, superpawn:2, heropawn:3, knight:3, bishop:3, rook:3, queen:5, king:8};
+const LETTER = {pawn:'P', knight:'N', bishop:'B', rook:'R', queen:'Q', king:'K'};
+
+// ----------------------------------------------------------------- STATE
+let scene, camera, renderer, raycaster, pointer;
+let boardGrid = [];      // boardGrid[row][col] = pieceId or null
+let pieces = [];         // all piece objects (alive + dead, dead filtered by .alive)
+let walls = [];          // {row,col,ownerColor,mesh}
+let guideMeshes = [];    // currently displayed tactical guide rings
+let highlightMeshes = []; // selection highlight rings under pieces
+
+let turnNum = 1;
+let score = {white:0, black:0};
+let gameOver = false;
+
+// reservation workflow state
+let phase = 'reserve_white'; // reserve_white -> reserve_black -> ready_to_resolve -> resolving -> reserve_white...
+let reservation = {white:null, black:null}; // {pieceId, actions:[{...},{...}]}
+let draft = null; // in-progress draft while a player is queuing a piece's 2 actions
+
+function inBounds(r,c){ return r>=0 && r<ROWS && c>=0 && c<COLS; }
+function pieceAt(r,c){ if(!inBounds(r,c)) return null; const id=boardGrid[r][c]; return id==null?null:pieces[id]; }
+function wallAt(r,c){ return walls.find(w=>w.row===r && w.col===c) || null; }
+function tileEmpty(r,c){ return inBounds(r,c) && pieceAt(r,c)===null && wallAt(r,c)===null; }
+function isUsable(p){ return p.alive && !p.isStunned; }
+
+function tilePos(row,col){ return new THREE.Vector3((col-3.5)*TILE, 0, (row-3.5)*TILE); }
+
+// ----------------------------------------------------------------- LOG / TOAST
+function log(msg, cls){
+  const el = document.getElementById('logPanel');
+  const line = document.createElement('span');
+  line.className = 'lg' + (cls? ' '+cls:'');
+  line.textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+let toastTimer=null;
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display='block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ t.style.display='none'; }, 1600);
+}
+
+// ----------------------------------------------------------------- INIT THREE
+function initThree(){
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05070d);
+  scene.fog = new THREE.Fog(0x05070d, 14, 26);
+
+  camera = new THREE.PerspectiveCamera(42, window.innerWidth/window.innerHeight, 0.1, 100);
+  camera.position.set(0, 10.2, 8.4);
+  camera.lookAt(0,0,0);
+
+  renderer = new THREE.WebGLRenderer({canvas:document.getElementById('gameCanvas'), antialias:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  const amb = new THREE.AmbientLight(0x445566, 1.1);
+  scene.add(amb);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+  dir.position.set(4,10,6);
+  scene.add(dir);
+  const pc = new THREE.PointLight(COLOR_HEX.white, 1.2, 18);
+  pc.position.set(-4,3,5); scene.add(pc);
+  const pm = new THREE.PointLight(COLOR_HEX.black, 1.2, 18);
+  pm.position.set(4,3,-5); scene.add(pm);
+
+  buildBoard();
+
+  raycaster = new THREE.Raycaster();
+  pointer = new THREE.Vector2();
+
+  renderer.domElement.addEventListener('pointerdown', onPointerDown, {passive:true});
+  window.addEventListener('resize', onResize);
+
+  animate();
+}
+function onResize(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+function animate(){
+  requestAnimationFrame(animate);
+  const t = performance.now()*0.002;
+  guideMeshes.forEach(g=>{ g.position.y = 0.06 + Math.sin(t*2+g.userData.phase)*0.015; });
+  renderer.render(scene, camera);
+}
+
+function buildBoard(){
+  const boardGroup = new THREE.Group();
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      const isLight = (r+c)%2===0;
+      const mat = new THREE.MeshStandardMaterial({
+        color: isLight? 0x18283a : 0x0a121c,
+        emissive: isLight? 0x07303a : 0x020608,
+        roughness:0.7, metalness:0.15
+      });
+      const tile = new THREE.Mesh(new THREE.BoxGeometry(TILE*0.97,0.12,TILE*0.97), mat);
+      const p = tilePos(r,c);
+      tile.position.set(p.x, -0.06, p.z);
+      boardGroup.add(tile);
+    }
+  }
+  // base plate glow border
+  const plate = new THREE.Mesh(
+    new THREE.BoxGeometry(TILE*8.4,0.05,TILE*8.4),
+    new THREE.MeshStandardMaterial({color:0x000000, emissive:0x0b1c22, roughness:1})
+  );
+  plate.position.y=-0.16;
+  boardGroup.add(plate);
+  scene.add(boardGroup);
+}
+
+// ----------------------------------------------------------------- PIECE MESH
+function makePieceMesh(type, color){
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color, emissive:color, emissiveIntensity:0.55, metalness:0.4, roughness:0.35
+  });
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.27,0.30,0.16,16), mat);
+  base.position.y = 0.08;
+  group.add(base);
+
+  let top;
+  switch(type){
+    case 'pawn':   top = new THREE.Mesh(new THREE.SphereGeometry(0.17,16,16), mat); top.position.y=0.16+0.17; break;
+    case 'knight': top = new THREE.Mesh(new THREE.ConeGeometry(0.19,0.46,4), mat);  top.position.y=0.16+0.23; top.rotation.y=Math.PI/4; break;
+    case 'bishop': top = new THREE.Mesh(new THREE.ConeGeometry(0.17,0.52,14), mat); top.position.y=0.16+0.26; break;
+    case 'rook':   top = new THREE.Mesh(new THREE.CylinderGeometry(0.20,0.23,0.34,12), mat); top.position.y=0.16+0.17; break;
+    case 'queen':  top = new THREE.Mesh(new THREE.SphereGeometry(0.21,16,16), mat); top.position.y=0.16+0.21; break;
+    case 'king':   top = new THREE.Mesh(new THREE.CylinderGeometry(0.17,0.21,0.40,8), mat); top.position.y=0.16+0.20; break;
+  }
+  group.add(top);
+
+  if(type==='king'){
+    const cv = new THREE.Mesh(new THREE.BoxGeometry(0.045,0.20,0.045), mat);
+    cv.position.y = top.position.y+0.30; group.add(cv);
+    const ch = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.045,0.045), mat);
+    ch.position.y = cv.position.y+0.05; group.add(ch);
+  }
+  if(type==='queen'){
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15,0.028,8,16), mat);
+    ring.rotation.x = Math.PI/2; ring.position.y = top.position.y+0.16; group.add(ring);
+  }
+  if(type==='rook'){
+    const crown = new THREE.Mesh(new THREE.BoxGeometry(0.30,0.06,0.30), mat);
+    crown.position.y = top.position.y+0.20; group.add(crown);
+  }
+
+  // label sprite (letter + hp) above piece
+  const spriteCanvas = document.createElement('canvas');
+  spriteCanvas.width=128; spriteCanvas.height=64;
+  const spriteTex = new THREE.CanvasTexture(spriteCanvas);
+  const spriteMat = new THREE.SpriteMaterial({map:spriteTex, depthTest:false});
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(0.62,0.31,1);
+  sprite.position.y = 1.05;
+  group.add(sprite);
+
+  group.userData.mat = mat;
+  group.userData.sprite = sprite;
+  group.userData.spriteCanvas = spriteCanvas;
+  group.userData.spriteTex = spriteTex;
+  return group;
+}
+
+function redrawLabel(piece){
+  const cvs = piece.mesh.userData.spriteCanvas;
+  const ctx = cvs.getContext('2d');
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+  let letter = LETTER[piece.type];
+  let tag = '';
+  if(piece.type==='pawn'){
+    if(piece.isHero) tag='+';
+    else if(piece.isSuperPawn && piece.superRevealed) tag='★';
+  }
+  const bg = piece.color==='white' ? 'rgba(20,40,55,0.85)' : 'rgba(55,20,30,0.85)';
+  const fg = piece.color==='white' ? '#2fd0ff' : '#ff2f6e';
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  if(ctx.roundRect) ctx.roundRect(2,2,cvs.width-4,cvs.height-4,14); else ctx.rect(2,2,cvs.width-4,cvs.height-4);
+  ctx.fill();
+  ctx.strokeStyle = fg; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle = fg;
+  ctx.font = 'bold 30px Orbitron, sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(letter+tag, cvs.width/2, 22);
+  ctx.font = '18px Share Tech Mono, monospace';
+  ctx.fillStyle = piece.hp <= piece.maxHp*0.34 ? '#ff4040' : (piece.hp<=piece.maxHp*0.67? '#ffb347':'#9bffb0');
+  ctx.fillText(piece.hp+'/'+piece.maxHp, cvs.width/2, 47);
+  piece.mesh.userData.spriteTex.needsUpdate = true;
+}
+
+// ----------------------------------------------------------------- SETUP GAME
+function setupPieces(){
+  pieces = [];
+  boardGrid = Array.from({length:ROWS},()=>Array(COLS).fill(null));
+  walls.forEach(w=>scene.remove(w.mesh)); walls=[];
+
+  const backRank = ['rook','knight','bishop','queen','king','bishop','knight','rook'];
+
+  function spawn(type,color,row,col){
+    const id = pieces.length;
+    const stats = baseStats(type);
+    const piece = {
+      id, type, color, row, col,
+      hp:stats.hp, maxHp:stats.hp, atk:stats.atk,
+      alive:true, isStunned:false, stunnedUntilTurn:-1,
+      isSuperPawn:false, superRevealed:false, isHero:false,
+      cooldown:0, ammo: type==='queen'?2:0, maxAmmo: type==='queen'?2:0,
+      mesh:null
+    };
+    piece.mesh = makePieceMesh(type, COLOR_HEX[color]);
+    const p = tilePos(row,col);
+    piece.mesh.position.set(p.x,0,p.z);
+    scene.add(piece.mesh);
+    pieces.push(piece);
+    boardGrid[row][col]=id;
+    redrawLabel(piece);
+    return piece;
+  }
+
+  for(let c=0;c<8;c++){ spawn(backRank[c],'white',0,c); }
+  for(let c=0;c<8;c++){ spawn('pawn','white',1,c); }
+  for(let c=0;c<8;c++){ spawn('pawn','black',6,c); }
+  for(let c=0;c<8;c++){ spawn(backRank[c],'black',7,c); }
+
+  // secretly assign super pawns
+  const whitePawns = pieces.filter(p=>p.color==='white'&&p.type==='pawn');
+  const blackPawns = pieces.filter(p=>p.color==='black'&&p.type==='pawn');
+  const wsp = whitePawns[Math.floor(Math.random()*whitePawns.length)];
+  const bsp = blackPawns[Math.floor(Math.random()*blackPawns.length)];
+  [wsp,bsp].forEach(p=>{
+    p.isSuperPawn = true;
+    p.hp = 2; p.maxHp = 2; p.atk = 2;
+    redrawLabel(p);
+  });
+
+  turnNum = 1; score.white=0; score.black=0; gameOver=false;
+  document.getElementById('scoreWhite').textContent='0';
+  document.getElementById('scoreBlack').textContent='0';
+  updateTurnHUD();
+  document.getElementById('logPanel').innerHTML='';
+  log('🎮 게임 시작! 백의 예약을 진행합니다. (슈퍼폰은 비밀 배치 완료)');
+  phase='reserve_white'; reservation={white:null,black:null}; draft=null;
+  setStatus('📋 예약 상태: [백 1번 행동 입력 중...] 자신의 기물을 탭하세요.');
+}
+
+function baseStats(type){
+  switch(type){
+    case 'pawn': return {hp:1, atk:1};
+    case 'knight': return {hp:3, atk:2};
+    case 'bishop': return {hp:1, atk:3};
+    case 'rook': return {hp:3, atk:1};
+    case 'queen': return {hp:3, atk:0};
+    case 'king': return {hp:5, atk:1};
+  }
+}
+
+// ----------------------------------------------------------------- MOVE / ATTACK TARGET GENERATION
+function getMoveTiles(piece, vr, vc){
+  vr = vr===undefined? piece.row : vr;
+  vc = vc===undefined? piece.col : vc;
+  const out=[];
+  switch(piece.type){
+    case 'pawn': case 'king':
+      NEI8.forEach(([dr,dc])=>{ const r=vr+dr,c=vc+dc; if(tileEmpty(r,c)) out.push({row:r,col:c}); });
+      break;
+    case 'knight':
+      KNIGHT_OFFS.forEach(([dr,dc])=>{ const r=vr+dr,c=vc+dc; if(tileEmpty(r,c)) out.push({row:r,col:c}); });
+      break;
+    case 'bishop':
+      DIAG4.forEach(([dr,dc])=>{
+        let r=vr+dr,c=vc+dc;
+        while(tileEmpty(r,c)){ out.push({row:r,col:c}); r+=dr; c+=dc; }
+      });
+      break;
+    case 'rook':
+      ORTHO4.forEach(([dr,dc])=>{
+        const mr=vr+dr, mc=vc+dc, r2=vr+dr*2, c2=vc+dc*2;
+        if(tileEmpty(mr,mc) && tileEmpty(r2,c2)) out.push({row:r2,col:c2});
+      });
+      break;
+    case 'queen':
+      ALL8DIR.forEach(([dr,dc])=>{
+        for(let step=1;step<=3;step++){
+          const r=vr+dr*step,c=vc+dc*step;
+          if(tileEmpty(r,c)) out.push({row:r,col:c}); else break;
+        }
+      });
+      break;
+  }
+  return out;
+}
+
+function getAttackTiles(piece, vr, vc){
+  vr = vr===undefined? piece.row : vr;
+  vc = vc===undefined? piece.col : vc;
+  const out=[];
+  switch(piece.type){
+    case 'pawn': case 'king':
+      NEI8.forEach(([dr,dc])=>{
+        const r=vr+dr,c=vc+dc; if(!inBounds(r,c)) return;
+        const occ=pieceAt(r,c); if(occ && occ.color===piece.color) return;
+        out.push({row:r,col:c});
+      });
+      break;
+    case 'knight':
+      NEI8.forEach(([dr,dc])=>{
+        const r=vr+dr,c=vc+dc; if(!inBounds(r,c)) return;
+        const occ=pieceAt(r,c); if(occ && occ.color===piece.color) return;
+        out.push({row:r,col:c});
+      });
+      break;
+    case 'rook':
+      [[2,0],[-2,0],[0,2],[0,-2]].forEach(([dr,dc])=>{
+        const r=vr+dr,c=vc+dc; if(!inBounds(r,c)) return;
+        const occ=pieceAt(r,c); if(occ && occ.color===piece.color) return;
+        out.push({row:r,col:c});
+      });
+      break;
+  }
+  return out;
+}
+function getBishopDirections(piece, vr, vc){
+  vr = vr===undefined? piece.row : vr;
+  vc = vc===undefined? piece.col : vc;
+  return DIAG4.filter(([dr,dc])=>inBounds(vr+dr,vc+dc));
+}
+function getWallTiles(piece){
+  const rows = piece.color==='white' ? [0,1,2,3] : [4,5,6,7];
+  const out=[];
+  for(const r of rows) for(let c=0;c<COLS;c++) if(tileEmpty(r,c)) out.push({row:r,col:c});
+  return out;
+}
+
+// ----------------------------------------------------------------- GUIDE RINGS
+function clearGuides(){
+  guideMeshes.forEach(g=>scene.remove(g));
+  guideMeshes=[];
+}
+function clearHighlights(){
+  highlightMeshes.forEach(g=>scene.remove(g));
+  highlightMeshes=[];
+}
+function addHighlight(row,col,color){
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(TILE*0.42,TILE*0.5,32),
+    new THREE.MeshBasicMaterial({color, transparent:true, opacity:0.9, side:THREE.DoubleSide})
+  );
+  ring.rotation.x=-Math.PI/2;
+  const p = tilePos(row,col);
+  ring.position.set(p.x,0.05,p.z);
+  scene.add(ring);
+  highlightMeshes.push(ring);
+}
+function showGuideRings(tiles, color, meta){
+  clearGuides();
+  tiles.forEach((t,i)=>{
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(TILE*0.30,TILE*0.42,28),
+      new THREE.MeshBasicMaterial({color, transparent:true, opacity:0.85, side:THREE.DoubleSide})
+    );
+    ring.rotation.x=-Math.PI/2;
+    const p = tilePos(t.row,t.col);
+    ring.position.set(p.x,0.06,p.z);
+    ring.userData = Object.assign({isTacticalGuide:true, row:t.row, col:t.col, phase:i*0.5}, meta||{}, t.dir?{dir:t.dir}:{});
+    scene.add(ring);
+    guideMeshes.push(ring);
+  });
+}
+
+// ----------------------------------------------------------------- POINTER / RAYCAST
+function onPointerDown(ev){
+  if(gameOver) return;
+  if(phase!=='reserve_white' && phase!=='reserve_black') return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
+  pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(pointer, camera);
+
+  if(draft && draft.mode==='targeting'){
+    const hits = raycaster.intersectObjects(guideMeshes, false);
+    if(hits.length>0){ handleGuideTap(hits[0].object); return; }
+    return;
+  }
+  if(!draft){
+    const pieceMeshes = pieces.filter(p=>p.alive).map(p=>p.mesh);
+    const hits = raycaster.intersectObjects(pieceMeshes, true);
+    if(hits.length>0){
+      let obj = hits[0].object;
+      while(obj.parent && !pieces.some(p=>p.mesh===obj)) obj=obj.parent;
+      const piece = pieces.find(p=>p.mesh===obj);
+      if(piece) handlePieceTap(piece);
+    }
+  }
+}
+
+const activeColor = ()=> phase==='reserve_white' ? 'white' : (phase==='reserve_black' ? 'black' : null);
+
+function handlePieceTap(piece){
+  const col = activeColor();
+  if(!col) return;
+  if(piece.color!==col){ toast('상대 기물은 선택할 수 없습니다'); return; }
+  if(!isUsable(piece)){ toast('⚡ 기절한 기물입니다. 선택 불가'); return; }
+  clearHighlights();
+  addHighlight(piece.row,piece.col, col==='white'?MOVE_RING_COLOR:ATK_RING_COLOR);
+  draft = {
+    color: col, piece, slot:0, actions:[null,null],
+    vr: piece.row, vc: piece.col,
+    mode:'choose_type'
+  };
+  openActionTypeMenu();
+}
+
+function openActionTypeMenu(){
+  clearGuides();
+  draft.mode='choose_type';
+  const piece = draft.piece;
+  const sheet = document.getElementById('actionSheet');
+  sheet.classList.add('show');
+  document.getElementById('sheetTitle').textContent =
+    `${draft.color==='white'?'⬜ 백':'⬛ 흑'} · ${pieceLabel(piece)} · 행동 ${draft.slot+1}/2 선택`;
+  document.getElementById('sheetSub').textContent = '행동 종류를 고른 뒤 보드에서 목표를 탭하세요.';
+  const row = document.getElementById('actionBtnRow');
+  row.innerHTML='';
+
+  const moveTiles = getMoveTiles(piece, draft.vr, draft.vc);
+  const canMove = moveTiles.length>0;
+
+  let canAttack=false;
+  if(piece.cooldown<=0){
+    if(piece.type==='bishop') canAttack = getBishopDirections(piece,draft.vr,draft.vc).length>0;
+    else if(piece.type==='queen') canAttack = piece.ammo>0;
+    else if(piece.type==='knight') canAttack = getAttackTiles(piece,draft.vr,draft.vc).length>=1;
+    else canAttack = getAttackTiles(piece,draft.vr,draft.vc).length>0;
+  }
+  const canSpecial = piece.type==='rook' && getWallTiles(piece).length>0;
+  const canReload = piece.cooldown>0;
+
+  addActBtn(row,'이동','primary',canMove, ()=>beginTargeting('move'));
+  addActBtn(row,'공격','danger',canAttack, ()=>beginTargeting('attack'));
+  if(piece.type==='rook') addActBtn(row,'특수: 벽 생성','danger',canSpecial, ()=>beginTargeting('special'));
+  addActBtn(row,'장전','',canReload, ()=>finalizeAction({type:'reload'}));
+  addActBtn(row,'대기','',true, ()=>finalizeAction({type:'wait'}));
+  addActBtn(row,'취소','cancel',true, cancelDraft);
+
+  updateChips();
+}
+function pieceLabel(p){
+  const names={pawn:'폰',knight:'나이트',bishop:'비숍',rook:'룩',queen:'퀸',king:'킹'};
+  let n = names[p.type];
+  if(p.type==='pawn'&&p.isHero) n='히어로폰';
+  return n;
+}
+function addActBtn(row,text,cls,enabled,fn){
+  const b=document.createElement('div');
+  b.className='actBtn '+(cls||'')+(enabled?'':' disabled');
+  b.textContent=text;
+  if(enabled) b.addEventListener('pointerup',(e)=>{e.stopPropagation(); fn();});
+  row.appendChild(b);
+}
+function updateChips(){
+  const labelOf = a => a? actionShortLabel(a) : '-';
+  document.getElementById('chip0').textContent='행동1: '+labelOf(draft.actions[0]);
+  document.getElementById('chip1').textContent='행동2: '+labelOf(draft.actions[1]);
+  document.getElementById('chip0').classList.toggle('filled', !!draft.actions[0]);
+  document.getElementById('chip1').classList.toggle('filled', !!draft.actions[1]);
+}
+function actionShortLabel(a){
+  const map={move:'이동',attack:'공격',special:'벽생성',reload:'장전',wait:'대기'};
+  return map[a.type]||a.type;
+}
+
+function beginTargeting(type){
+  const piece = draft.piece;
+  document.getElementById('actionSheet').classList.remove('show');
+  if(type==='move'){
+    showGuideRings(getMoveTiles(piece,draft.vr,draft.vc), MOVE_RING_COLOR, {kind:'move'});
+    draft.mode='targeting'; draft.pendingType='move';
+    setStatus(`🟢 ${pieceLabel(piece)} 이동할 타일을 탭하세요.`);
+  } else if(type==='attack'){
+    if(piece.type==='bishop'){
+      const dirs = getBishopDirections(piece,draft.vr,draft.vc);
+      const guideTiles=[];
+      dirs.forEach(([dr,dc])=>{
+        let r=draft.vr+dr,c=draft.vc+dc;
+        while(inBounds(r,c)){ guideTiles.push({row:r,col:c,dir:[dr,dc]}); if(!tileEmpty(r,c)) break; r+=dr;c+=dc; }
+      });
+      showGuideRings(guideTiles, ATK_RING_COLOR, {kind:'bishop_dir'});
+      draft.mode='targeting'; draft.pendingType='attack';
+      setStatus('🎯 비숍 저격 방향(라인 위 어디든)을 탭하세요. 장전 2턴 소요.');
+    } else if(piece.type==='queen'){
+      finalizeAction({type:'attack', mode:'queen_volley'});
+      return;
+    } else if(piece.type==='knight'){
+      const tiles = getAttackTiles(piece,draft.vr,draft.vc);
+      showGuideRings(tiles, ATK_RING_COLOR, {kind:'knight_pick', needed:2});
+      draft.mode='targeting'; draft.pendingType='attack'; draft.knightPicks=[];
+      setStatus('🎯 나이트 공격: 주변 2칸을 순서대로 탭하세요. (0/2)');
+    } else {
+      const tiles = getAttackTiles(piece,draft.vr,draft.vc);
+      showGuideRings(tiles, ATK_RING_COLOR, {kind:'single'});
+      draft.mode='targeting'; draft.pendingType='attack';
+      setStatus(`🎯 ${pieceLabel(piece)} 공격할 타일을 탭하세요.`);
+    }
+  } else if(type==='special'){
+    showGuideRings(getWallTiles(piece), ATK_RING_COLOR, {kind:'wall'});
+    draft.mode='targeting'; draft.pendingType='special';
+    setStatus('🧱 벽을 생성할 타일(자기 진영 4줄 내)을 탭하세요.');
+  }
+}
+
+function handleGuideTap(ringObj){
+  const ud = ringObj.userData;
+  if(ud.kind==='move'){
+    finalizeAction({type:'move', row:ud.row, col:ud.col});
+  } else if(ud.kind==='single'){
+    finalizeAction({type:'attack', row:ud.row, col:ud.col});
+  } else if(ud.kind==='wall'){
+    finalizeAction({type:'special', row:ud.row, col:ud.col});
+  } else if(ud.kind==='bishop_dir'){
+    finalizeAction({type:'attack', dir:ud.dir});
+  } else if(ud.kind==='knight_pick'){
+    const key=ud.row+'_'+ud.col;
+    if(draft.knightPicks.some(p=>p.key===key)) return;
+    draft.knightPicks.push({row:ud.row,col:ud.col,key});
+    addHighlight(ud.row,ud.col, ATK_RING_COLOR);
+    setStatus(`🎯 나이트 공격: 주변 2칸을 순서대로 탭하세요. (${draft.knightPicks.length}/2)`);
+    if(draft.knightPicks.length===2){
+      const picks = draft.knightPicks.map(p=>({row:p.row,col:p.col}));
+      finalizeAction({type:'attack', targets:picks});
+    }
+  }
+}
+
+function finalizeAction(action){
+  draft.actions[draft.slot] = action;
+  // update virtual position for chained legality if this slot was a move
+  if(action.type==='move'){ draft.vr=action.row; draft.vc=action.col; }
+  clearGuides();
+  if(draft.slot===0){
+    draft.slot=1;
+    updateChips();
+    openActionTypeMenu();
+  } else {
+    // both actions queued for this piece
+    reservation[draft.color] = {pieceId:draft.piece.id, actions:draft.actions.slice()};
+    clearHighlights();
+    document.getElementById('actionSheet').classList.remove('show');
+    log(`${draft.color==='white'?'⬜백':'⬛흑'} 예약 완료: ${pieceLabel(draft.piece)} [${actionShortLabel(draft.actions[0])} → ${actionShortLabel(draft.actions[1])}]`);
+    const finishedColor = draft.color;
+    draft=null;
+    advancePhaseAfterReservation(finishedColor);
+  }
+}
+function cancelDraft(){
+  clearGuides(); clearHighlights();
+  document.getElementById('actionSheet').classList.remove('show');
+  draft=null;
+  setStatus(`📋 예약 상태: [${activeColor()==='white'?'백':'흑'} 행동 입력 중...] 자신의 기물을 탭하세요.`);
+}
+
+function advancePhaseAfterReservation(finishedColor){
+  if(finishedColor==='white'){
+    showPassScreen('🔒 백 예약 완료', '기기를 상대(흑)에게 넘겨주세요. 흑의 예약이 시작됩니다.', '흑 차례 시작 ▶', ()=>{
+      phase='reserve_black';
+      setStatus('📋 예약 상태: [흑 1번 행동 입력 중...] 자신의 기물을 탭하세요.');
+    });
+  } else {
+    showPassScreen('🔒 흑 예약 완료', '양측 예약이 모두 끝났습니다. 결산을 진행할까요?', '⚔️ 결산 시작', ()=>{
+      phase='resolving';
+      setStatus('⚔️ 결산 중...');
+      resolveTurn();
+    });
+  }
+}
+function showPassScreen(title,sub,btn,onGo){
+  const ps=document.getElementById('passScreen');
+  document.getElementById('passTitle').textContent=title;
+  document.getElementById('passSub').textContent=sub;
+  document.getElementById('passBtn').textContent=btn;
+  ps.classList.add('show');
+  document.getElementById('passBtn').onclick=()=>{ ps.classList.remove('show'); onGo(); };
+}
+
+function setStatus(t){ document.getElementById('statusBar').textContent=t; }
+function updateTurnHUD(){ document.getElementById('turnCounter').textContent=`TURN ${turnNum} / 50`; }
+
+// ----------------------------------------------------------------- COMBAT HELPERS
+function awardScore(color, amount, reason){
+  score[color]+=amount;
+  document.getElementById(color==='white'?'scoreWhite':'scoreBlack').textContent=score[color];
+  log(`+${amount}점 (${color==='white'?'백':'흑'}) — ${reason}`, 'kill');
+}
+function scoreValueOf(piece){
+  if(piece.type==='king') return SCORE_TABLE.king;
+  if(piece.type==='queen') return SCORE_TABLE.queen;
+  if(piece.type==='knight'||piece.type==='bishop'||piece.type==='rook') return SCORE_TABLE[piece.type];
+  if(piece.type==='pawn'){
+    if(piece.isHero) return SCORE_TABLE.heropawn;
+    if(piece.isSuperPawn) return SCORE_TABLE.superpawn;
+    return SCORE_TABLE.pawn;
+  }
+}
+function revealSuper(piece){
+  if(piece.isSuperPawn && !piece.superRevealed){
+    piece.superRevealed=true;
+    redrawLabel(piece);
+    log(`👁️ 정체 공개! ${piece.color==='white'?'백':'흑'}의 슈퍼폰이었습니다.`,'warn');
+  }
+}
+function dealDamage(target, amount, attacker, attackerColor){
+  if(!target.alive) return;
+  revealSuper(target);
+  if(attacker) revealSuper(attacker);
+  target.hp -= amount;
+  log(`💥 ${attackerColor==='white'?'백':'흑'} ${attacker?pieceLabel(attacker):''} → ${target.color==='white'?'백':'흑'} ${pieceLabel(target)} 피해 ${amount} (HP ${Math.max(target.hp,0)}/${target.maxHp})`);
+  if(target.hp<=0 && target.alive){
+    killPiece(target, attackerColor);
+  } else {
+    redrawLabel(target);
+  }
+}
+function killPiece(target, killerColor){
+  target.alive=false;
+  boardGrid[target.row][target.col]=null;
+  scene.remove(target.mesh);
+  const pts = scoreValueOf(target);
+  awardScore(killerColor, pts, `${target.color==='white'?'백':'흑'} ${pieceLabel(target)} 처치`);
+  if(target.type==='king'){
+    log(`👑 ${target.color==='white'?'백':'흑'}의 킹이 쓰러졌습니다! (게임은 계속됩니다)`,'warn');
+  }
+}
+function moveOnBoard(piece, r, c){
+  boardGrid[piece.row][piece.col]=null;
+  piece.row=r; piece.col=c;
+  boardGrid[r][c]=piece.id;
+  const p = tilePos(r,c);
+  piece.mesh.position.set(p.x,0,p.z);
+  checkHeroEvolution(piece);
+}
+function checkHeroEvolution(piece){
+  if(piece.type!=='pawn' || piece.isHero) return;
+  const reached = (piece.color==='white' && piece.row===7) || (piece.color==='black' && piece.row===0);
+  if(reached){
+    piece.isHero=true;
+    piece.maxHp=3; piece.hp=3; piece.atk=3;
+    redrawLabel(piece);
+    log(`✨ ${piece.color==='white'?'백':'흑'} 폰이 히어로폰으로 진화! (HP/ATK 3 회복)`,'kill');
+  }
+}
+
+function stunPiece(piece){
+  piece.isStunned=true;
+  piece.stunnedUntilTurn = turnNum+1;
+}
+function clearExpiredStuns(){
+  pieces.forEach(p=>{
+    if(p.isStunned && turnNum > p.stunnedUntilTurn) p.isStunned=false;
+  });
+}
+
+// ----------------------------------------------------------------- ACTION EXECUTION
+function execMove(piece, action){
+  if(!piece.alive) return;
+  if(tileEmpty(action.row, action.col)){
+    moveOnBoard(piece, action.row, action.col);
+    log(`➡️ ${piece.color==='white'?'백':'흑'} ${pieceLabel(piece)} 이동 (${action.row},${action.col})`);
+  } else {
+    log(`🚫 ${piece.color==='white'?'백':'흑'} ${pieceLabel(piece)} 이동 실패: 칸이 막혀있음`);
+  }
+}
+function execAttack(piece, action){
+  if(!piece.alive) return;
+  const enemyColor = piece.color==='white'?'black':'white';
+  if(piece.type==='pawn' || piece.type==='king'){
+    const target = pieceAt(action.row, action.col);
+    if(target && target.color===enemyColor) dealDamage(target, piece.atk, piece, piece.color);
+    else log(`(빗나감) ${piece.color==='white'?'백':'흑'} ${pieceLabel(piece)} 공격 — 대상 없음`);
+  } else if(piece.type==='rook'){
+    const target = pieceAt(action.row, action.col);
+    if(target && target.color===enemyColor) dealDamage(target, piece.atk, piece, piece.color);
+    else log(`(빗나감) 백/흑 룩 공격 — 대상 없음`);
+  } else if(piece.type==='knight'){
+    (action.targets||[]).forEach(t=>{
+      const target = pieceAt(t.row,t.col);
+      if(target && target.color===enemyColor) dealDamage(target, piece.atk, piece, piece.color);
+    });
+  } else if(piece.type==='bishop'){
+    const [dr,dc] = action.dir;
+    let r=piece.row+dr, c=piece.col+dc;
+    let resolved=false;
+    while(inBounds(r,c)){
+      const w = wallAt(r,c);
+      if(w){
+        log(`🧱💥 비숍의 총알이 벽에 반사! ${piece.color==='white'?'백':'흑'} 비숍 자폭`,'warn');
+        piece.hp=0; piece.alive=false; boardGrid[piece.row][piece.col]=null; scene.remove(piece.mesh);
+        resolved=true; break;
+      }
+      const target = pieceAt(r,c);
+      if(target){
+        if(target.color===enemyColor) dealDamage(target, piece.atk, piece, piece.color);
+        else log(`(빗나감) 자기 진영 기물에 막힘`);
+        resolved=true; break;
+      }
+      r+=dr; c+=dc;
+    }
+    if(!resolved) log(`(빗나감) 비숍 저격 — 명중 없음`);
+    if(piece.alive){ piece.cooldown=2; redrawLabel(piece); }
+  } else if(piece.type==='queen'){
+    const lanes = [
+      {dir:FORWARD[piece.color], atk:2, name:'정면'},
+      {dir:DIAG_LEFT[piece.color], atk:1, name:'좌측대각'},
+      {dir:DIAG_RIGHT[piece.color], atk:1, name:'우측대각'}
+    ];
+    lanes.forEach(lane=>{
+      const [dr,dc]=lane.dir;
+      for(let step=1;step<=2;step++){
+        const r=piece.row+dr*step, c=piece.col+dc*step;
+        if(!inBounds(r,c)) break;
+        const w = wallAt(r,c);
+        if(w){ log(`🧱 퀸의 ${lane.name} 공격이 벽에 막힘`); break; }
+        const target = pieceAt(r,c);
+        if(target){
+          if(target.color===enemyColor) dealDamage(target, lane.atk, piece, piece.color);
+          else log(`퀸의 ${lane.name} 공격 — 자기 기물에 막힘`);
+          break;
+        }
+      }
+    });
+    piece.ammo -= 1;
+    if(piece.ammo<=0){ piece.cooldown=2; log(`🔄 ${piece.color==='white'?'백':'흑'} 퀸 탄창 소진, 2턴 장전 시작`); }
+    redrawLabel(piece);
+  }
+}
+function execSpecial(piece, action){
+  if(!piece.alive || piece.type!=='rook') return;
+  if(!tileEmpty(action.row,action.col)) { log('🚫 벽 생성 실패: 칸이 막혀있음'); return; }
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(TILE*0.8,0.55,TILE*0.8),
+    new THREE.MeshStandardMaterial({color:WALL_COLOR, emissive:WALL_COLOR, emissiveIntensity:0.5, transparent:true, opacity:0.55})
+  );
+  const p=tilePos(action.row,action.col);
+  mesh.position.set(p.x,0.27,p.z);
+  scene.add(mesh);
+  walls.push({row:action.row,col:action.col,ownerColor:piece.color,mesh});
+  log(`🧱 ${piece.color==='white'?'백':'흑'} 룩이 벽 생성 (${action.row},${action.col})`);
+}
+function execOne(piece, action){
+  if(!action) return;
+  if(action.type==='move') execMove(piece,action);
+  else if(action.type==='attack') execAttack(piece,action);
+  else if(action.type==='special') execSpecial(piece,action);
+  // 'wait' / 'reload' -> no-op
+}
+
+// ----------------------------------------------------------------- RESOLUTION ENGINE
+function resolveTurn(){
+  const order = (turnNum % 2 === 1) ? ['white','black'] : ['black','white'];
+  const resW = reservation.white, resB = reservation.black;
+  const pW = resW ? pieces[resW.pieceId] : null;
+  const pB = resB ? pieces[resB.pieceId] : null;
+
+  let delay=0;
+  const STEP_MS=650;
+
+  function runRound(roundIdx){
+    const aW = pW && pW.alive ? resW.actions[roundIdx] : null;
+    const aB = pB && pB.alive ? resB.actions[roundIdx] : null;
+
+    const bothMoveSameTile = aW && aB && aW.type==='move' && aB.type==='move' &&
+      aW.row===aB.row && aW.col===aB.col;
+
+    if(bothMoveSameTile){
+      log(`⚡ 충돌! 백 ${pieceLabel(pW)} ↔ 흑 ${pieceLabel(pB)} — 같은 타일로 이동 시도. 둘 다 실패하고 기절합니다.`,'warn');
+      stunPiece(pW); stunPiece(pB);
+      // remainder of this piece's queued actions this turn are forfeited
+      if(roundIdx===0){ resW.actions[1]=null; resB.actions[1]=null; }
+      return;
+    }
+    const seq = order; // who resolves first this round
+    seq.forEach(color=>{
+      const p = color==='white'? pW : pB;
+      const a = color==='white'? aW : aB;
+      if(p && p.alive && a) execOne(p,a);
+    });
+  }
+
+  function step(i){
+    if(i>=2){ finishResolution(); return; }
+    setTimeout(()=>{
+      runRound(i);
+      checkMidGameOver();
+      if(!gameOver) step(i+1);
+    }, i===0?150:STEP_MS);
+  }
+  step(0);
+}
+
+function checkMidGameOver(){
+  if(score.white>=27 || score.black>=27){
+    const winner = score.white>=27 ? 'white' : 'black';
+    endGame(winner, `${winner==='white'?'백':'흑'}이 27점을 먼저 달성했습니다!`);
+  }
+}
+
+function finishResolution(){
+  if(gameOver) return;
+  if(score.white>=27 || score.black>=27){
+    const winner = score.white>=27?'white':'black';
+    endGame(winner, `${winner==='white'?'백':'흑'}이 27점을 먼저 달성했습니다!`);
+    return;
+  }
+  if(turnNum>=50){
+    let winner;
+    if(score.white>score.black) winner='white';
+    else if(score.black>score.white) winner='black';
+    else winner='draw';
+    endGame(winner, '50턴이 종료되었습니다.');
+    return;
+  }
+  // next turn setup
+  walls.forEach(w=>scene.remove(w.mesh));
+  walls=[];
+  turnNum+=1;
+  clearExpiredStuns();
+  pieces.forEach(p=>{
+    if(p.cooldown>0){
+      p.cooldown-=1;
+      if(p.cooldown===0){
+        if(p.type==='queen'){ p.ammo=p.maxAmmo; }
+        log(`🔧 ${p.color==='white'?'백':'흑'} ${pieceLabel(p)} 장전 완료`);
+      }
+      redrawLabel(p);
+    }
+  });
+  updateTurnHUD();
+  reservation={white:null,black:null};
+  phase='reserve_white';
+  setStatus(`📋 예약 상태: [백 1번 행동 입력 중...] 자신의 기물을 탭하세요. (Turn ${turnNum})`);
+}
+
+function endGame(winner, reason){
+  gameOver=true;
+  phase='gameover';
+  clearGuides(); clearHighlights();
+  document.getElementById('actionSheet').classList.remove('show');
+  const ws=document.getElementById('winScreen');
+  const title=document.getElementById('winTitle');
+  const sub=document.getElementById('winSub');
+  if(winner==='draw'){
+    title.textContent='🤝 무승부'; title.style.color='#ffd700';
+  } else {
+    title.textContent = (winner==='white'?'⬜ 백 승리!':'⬛ 흑 승리!');
+    title.style.color = winner==='white'?'#2fd0ff':'#ff2f6e';
+  }
+  sub.textContent = `${reason} — 최종 점수: 백 ${score.white} : 흑 ${score.black}`;
+  ws.classList.add('show');
+  log(`🏁 게임 종료 — ${reason} (백 ${score.white} : 흑 ${score.black})`,'kill');
+}
+
+// ----------------------------------------------------------------- BOOT
+document.getElementById('startGameBtn').addEventListener('click', ()=>{
+  document.getElementById('introScreen').style.display='none';
+  initThree();
+  setupPieces();
+});
+document.getElementById('restartBtn').addEventListener('click', ()=>{
+  document.getElementById('winScreen').classList.remove('show');
+  setupPieces();
+});
+</script>
+</body>
+</html>
+
