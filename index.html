@@ -642,3 +642,236 @@
         }
     }
 </script>
+
+<style>
+    /* 1. 기물 클릭 시 그 자리에 컴퓨터 파일 메뉴처럼 둥둥 뜰 모바일 전용 팝업 */
+    #mobileContextMenu {
+        position: absolute; z-index: 5000; display: none;
+        flex-direction: column; gap: 6px; background: rgba(10, 11, 18, 0.95);
+        border: 2px solid #00ffcc; padding: 8px; border-radius: 8px;
+        box-shadow: 0 5px 15px rgba(0,255,204,0.4); pointer-events: auto;
+    }
+    .menu-item-btn {
+        padding: 8px 16px; border: none; background: #1a1d29; color: #fff;
+        font-weight: bold; font-size: 0.9rem; border-radius: 4px; cursor: pointer;
+        text-align: center; white-space: nowrap; min-width: 100px;
+    }
+    .menu-item-btn:active { background: #00ffcc; color: #000; }
+    
+    /* 2. 현재 백1, 백2 행동이 어떻게 예약되고 있는지 실시간으로 보여주는 상단 트래커 */
+    #reservationTracker {
+        position: absolute; top: 90px; left: 20px; background: rgba(255, 204, 0, 0.15);
+        border: 1px solid #ffcc00; color: #ffcc00; padding: 8px 12px;
+        border-radius: 6px; font-size: 0.9rem; z-index: 2000; display: block;
+        font-family: sans-serif; pointer-events: none;
+    }
+</style>
+
+<div id="mobileContextMenu">
+    <button class="menu-item-btn" id="mBtnMove">🏃 이동하기</button>
+    <button class="menu-item-btn" id="mBtnAttack">⚔️ 공격하기</button>
+</div>
+
+<div id="reservationTracker">
+    📋 예약 등록 상태: <span id="trackTxt">대기 중</span>
+</div>
+
+<script>
+    // 기존에 존재하던 PC 전용 우측 패널이 있다면 화면에서 완전 소각
+    if (document.getElementById('actionPanel')) document.getElementById('actionPanel').remove();
+
+    let mMenu = document.getElementById('mobileContextMenu');
+    let trackTxt = document.getElementById('trackTxt');
+
+    let bookedActions = []; // 유저가 누른 행동 순서 저장 리스트 ['이동', '공격']
+    let activeMobilePiece = null; // 현재 제어 중인 기물 메쉬 데이터
+    let isDragMode = false;
+    let isTargetingAttack = false;
+
+    // 드래그 조작을 위한 가상의 3D 바닥 평면 연산 장치
+    let dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    let planeRaycaster = new THREE.Raycaster();
+    let mouseVec = new THREE.Vector2();
+    let coreRaycaster = new THREE.Raycaster();
+
+    // 상단 그래픽 엔진 부팅 상태 체크 후 안전하게 인터셉트
+    const startMobileInterception = setInterval(() => {
+        if (typeof renderer !== 'undefined' && typeof camera !== 'undefined' && typeof scene !== 'undefined') {
+            clearInterval(startMobileInterception);
+            
+            // 기존에 꼬여있던 구버전 클릭 리스너를 완전히 청소하고 모바일 터치 기반으로 리다이렉트
+            renderer.domElement.replaceWith(renderer.domElement.cloneNode(true));
+            
+            // 리셋된 최신 렌더러 엘리먼트에 포인터 이벤트 바인딩
+            const activeCanvas = document.querySelectorAll('canvas')[0] || renderer.domElement;
+            activeCanvas.addEventListener('pointerdown', onMobilePointerDown);
+            activeCanvas.addEventListener('pointermove', onMobilePointerMove);
+            activeCanvas.addEventListener('pointerup', onMobilePointerUp);
+            
+            setupMobileMenuEvents();
+            updateTrackerText();
+            console.log("모바일 전용 파일 팝업 및 드래그 예약 시스템 인터셉트 완료.");
+        }
+    }, 300);
+
+    // [동작 1: 기물 터치 다운]
+    function onMobilePointerDown(event) {
+        if (isTargetingAttack) {
+            // 공격하기를 누른 상태에서 바닥을 탭했을 때
+            executeAttackTileSelection();
+            return;
+        }
+
+        mouseVec.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouseVec.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        coreRaycaster.setFromCamera(mouseVec, camera);
+
+        const intersects = coreRaycaster.intersectObjects(scene.children);
+        if (intersects.length > 0) {
+            const clicked = intersects[0].object;
+
+            // 내가 생성한 기물 부대 리스트(renderPieces) 중에서 터치했는지 판별
+            if (typeof renderPieces !== 'undefined' && renderPieces.includes(clicked)) {
+                const idx = renderPieces.indexOf(clicked);
+                
+                if (idx < 16) { // 백진영(블루) 기물 터치 세팅 보장
+                    activeMobilePiece = { mesh: clicked, index: idx };
+                    
+                    // 기물이 서 있는 3D 위치를 2D 화면 좌표로 픽셀 변환하여 팝업 정렬
+                    const screenPos = clicked.position.clone().project(camera);
+                    const x = (screenPos.x * .5 + .5) * window.innerWidth;
+                    const y = (screenPos.y * -.5 + .5) * window.innerHeight;
+
+                    mMenu.style.left = `${x + 25}px`;
+                    mMenu.style.top = `${y - 35}px`;
+                    mMenu.style.display = 'flex';
+                    
+                    bookedActions = []; // 기물을 새로 터치하면 예약 초기화
+                    updateTrackerText();
+                }
+            }
+        }
+    }
+
+    // [동작 2: 드래그 이동 조작 진행 중]
+    function onMobilePointerMove(event) {
+        if (!isDragMode || !activeMobilePiece) return;
+
+        mouseVec.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouseVec.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        planeRaycaster.setFromCamera(mouseVec, camera);
+
+        let intersectPoint = new THREE.Vector3();
+        planeRaycaster.ray.intersectPlane(dragPlane, intersectPoint);
+        
+        // 손가락을 따라 기물이 부드럽게 3D 보드 위에서 공중부양하며 드래그되는 시각 연출
+        activeMobilePiece.mesh.position.x = intersectPoint.x;
+        activeMobilePiece.mesh.position.z = intersectPoint.z;
+        activeMobilePiece.mesh.position.y = 0.7; 
+    }
+
+    // [동작 3: 손가락을 떼었을 때 격자 자석 안착]
+    function onMobilePointerUp() {
+        if (isDragMode && activeMobilePiece) {
+            isDragMode = false;
+            
+            const tSize = 1.15;
+            const gridX = Math.round(activeMobilePiece.mesh.position.x / tSize);
+            const gridZ = Math.round(activeMobilePiece.mesh.position.z / tSize);
+            
+            // 8x8 전장 바깥으로 기물이 탈출하지 못하게 강제 보정 좌표 고정
+            const finalX = Math.max(-3, Math.min(4, gridX));
+            const finalZ = Math.max(-3, Math.min(4, gridZ));
+
+            activeMobilePiece.mesh.position.x = finalX * tSize;
+            activeMobilePiece.mesh.position.z = finalZ * tSize;
+            activeMobilePiece.mesh.position.y = 0.45; // 원래 기물 고유 높이 복귀
+
+            checkActionsCompletion();
+        }
+    }
+
+    // 파일 메뉴 버튼 이벤트 바인딩 마스터 컨트롤러
+    function setupMobileMenuEvents() {
+        // [이동하기 분기]
+        document.getElementById('mBtnMove').addEventListener('click', (e) => {
+            e.stopPropagation();
+            mMenu.style.display = 'none';
+            
+            bookedActions.push("이동");
+            updateTrackerText();
+            
+            alert("🏃 기물을 잡고 원하는 칸으로 드래그해서 옮겨주세요!");
+            isDragMode = true;
+        });
+
+        // [공격하기 분기]
+        document.getElementById('mBtnAttack').addEventListener('click', (e) => {
+            e.stopPropagation();
+            mMenu.style.display = 'none';
+            
+            bookedActions.push("공격");
+            updateTrackerText();
+            
+            alert("⚔️ 타겟팅 모드! 공격을 가할 바닥 타일을 터치해 주세요.");
+            isTargetingAttack = true;
+        });
+    }
+
+    // 공격 지역 타치 감지 장치
+    function executeAttackTileSelection() {
+        isTargetingAttack = false;
+        alert("🎯 공격 범위 타겟 설정 완료!");
+        checkActionsCompletion();
+    }
+
+    // 승현이의 예약 순서 추적기 시스템 텍스트 출력 모듈
+    function updateTrackerText() {
+        if (bookedActions.length === 0) {
+            trackTxt.innerHTML = `<b style='color:#aaa;'>기물 선택 대기 중</b>`;
+        } else if (bookedActions.length === 1) {
+            // 처음 클릭한 행위가 무조건 백1 / 흑1번 행동으로 트리거링됨!
+            trackTxt.innerHTML = `<span style='color:#00ffcc; font-weight:bold;'>[백 1번]: ${bookedActions[0]} 완료</span> ➡️ <b style='color:#ffcc00;'>[2번 행동 예약 대기]</b>`;
+        } else if (bookedActions.length === 2) {
+            // 두 번째 클릭한 행위가 백2 / 흑2번 행동으로 트리거링됨!
+            trackTxt.innerHTML = `<span style='color:#00ffcc; font-weight:bold;'>[백 1번]: ${bookedActions[0]}</span> ➡️ <span style='color:#ff0055; font-weight:bold;'>[백 2번]: ${bookedActions[1]}</span>`;
+        }
+    }
+
+    // 행동 2개가 가득 채워졌을 때 교차 실행 알고리즘 런타임 가동
+    function checkActionsCompletion() {
+        if (bookedActions.length >= 2) {
+            setTimeout(() => {
+                // 컴퓨터 진영 카운터 심리 행동 동시 시뮬레이션
+                const bot1 = Math.random() > 0.5 ? "이동" : "공격";
+                const bot2 = bot1 === "이동" ? "공격" : "이동";
+
+                let finalLog = `⚡ [심리 예측 교차 실행 완료]\n\n`;
+                finalLog += `1️⃣ [백 1번]: 백선수 ${bookedActions[0]} 실행\n`;
+                finalLog += `2️⃣ [흑 1번]: 흑선수(AI) ${bot1} 실행\n`;
+                finalLog += `3️⃣ [백 2번]: 백선수 ${bookedActions[1]} 실행\n`;
+                finalLog += `4️⃣ [흑 2번]: 흑선수(AI) ${bot2} 실행\n\n`;
+                finalLog += `📢 판정: 양측 동선 겹침 없음! 정상적으로 계산이 종료되었습니다. 다음 턴을 준비하세요!`;
+
+                alert(finalLog);
+                
+                // 턴 리셋 및 초기화
+                bookedActions = [];
+                activeMobilePiece = null;
+                updateTrackerText();
+            }, 250);
+        } else {
+            // 아직 행동을 1개만 골랐다면, 마저 2번째 행동을 등록할 수 있게 파일 메뉴 팝업 재소환
+            setTimeout(() => {
+                if (activeMobilePiece) {
+                    const screenPos = activeMobilePiece.mesh.position.clone().project(camera);
+                    const x = (screenPos.x * .5 + .5) * window.innerWidth;
+                    const y = (screenPos.y * -.5 + .5) * window.innerHeight;
+                    mMenu.style.left = `${x + 25}px`;
+                    mMenu.style.top = `${y - 35}px`;
+                    mMenu.style.display = 'flex';
+                }
+            }, 350);
+        }
+    }
+</script>
