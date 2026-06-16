@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Dual Action Chess</title>
+
+<style>
+
+body{
+    background:#222;
+    color:white;
+    text-align:center;
+}
+
+#board{
+    width:640px;
+    height:640px;
+
+    margin:auto;
+
+    display:grid;
+    grid-template-columns:repeat(8,1fr);
+}
+
+.cell{
+    width:80px;
+    height:80px;
+
+    display:flex;
+    justify-content:center;
+    align-items:center;
+
+    font-size:40px;
+}
+
+.white{
+    background:#f0d9b5;
+}
+
+.black{
+    background:#b58863;
+}
+
+</style>
+</head>
+
+<body>
+
+<h1>Dual Action Chess</h1>
+
+<div id="board"></div>
+
+<script>
+
+const board=document.getElementById("board");
+
+for(let y=0;y<8;y++){
+
+    for(let x=0;x<8;x++){
+
+        const cell=document.createElement("div");
+
+        cell.classList.add("cell");
+
+        if((x+y)%2===0){
+            cell.classList.add("white");
+        }else{
+            cell.classList.add("black");
+        }
+
+        board.appendChild(cell);
+    }
+}
+
+</script>
+
+</body>
+</html>
+
+const pieces = [
+
+{
+type:"rook",
+team:"white",
+hp:3,
+atk:1,
+x:0,
+y:7
+},
+
+{
+type:"king",
+team:"white",
+hp:5,
+atk:1,
+x:4,
+y:7
+}
+
+];
+whiteActions = [
+{
+piece:3,
+action:"move",
+x:4,
+y:4
+},
+{
+piece:3,
+action:"attack",
+x:4,
+y:3
+}
+];
+executeTurn(){
+
+whiteAction1();
+
+blackAction1();
+
+whiteAction2();
+
+blackAction2();
+
+}
