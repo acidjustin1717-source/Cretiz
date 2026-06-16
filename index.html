@@ -1065,3 +1065,239 @@
         }
     })();
 </script>
+<script>
+    (function() {
+        let bookedActions = [];       // 예약 행동 보관함
+        let reservedTargetTile = null;  // 예약된 이동 목표 좌표
+        let currentPieceData = null;    // 현재 제어 중인 기물
+        
+        let isSelectingMoveTile = false;
+        let isSelectingAttackTile = false;
+
+        let moveGuides = []; // 화면에 그려진 동그라미 가이드 메쉬들을 담는 배열
+
+        const localRaycaster = new THREE.Raycaster();
+        const localMouse = new THREE.Vector2();
+
+        // 부팅 및 이벤트 재연결
+        const initGuideEngine = setInterval(() => {
+            if (typeof renderer !== 'undefined' && typeof camera !== 'undefined' && typeof scene !== 'undefined') {
+                clearInterval(initGuideEngine);
+
+                // 이전 이벤트 충돌 방지를 위해 캔버스 클론 교체
+                const oldCanvas = renderer.domElement;
+                const newCanvas = oldCanvas.cloneNode(true);
+                oldCanvas.parentNode.replaceChild(newCanvas, oldCanvas);
+
+                newCanvas.addEventListener('pointerdown', handleTacticalTouchWithGuide);
+                setupGuideMenuEvents();
+                console.log("체스식 네온 동그라미 이동 가이드 시스템 동기화 완료.");
+            }
+        }, 300);
+
+        // [핵심 기능] 기물 주변 8칸에 초록색 네온 동그라미 가이드를 그리는 함수
+        function showMoveGuides(pieceMesh) {
+            // 기존에 남아있던 동그라미 가이드가 있다면 싹 청소
+            clearMoveGuides();
+
+            const tSize = 1.15;
+            // 현재 기물의 8방향 주변 그리드 좌표 오프셋 (앞, 뒤, 좌, 우, 대각선 4방향)
+            const directions = [
+                {x: 1, z: 0}, {x: -1, z: 0}, {x: 0, z: 1}, {x: 0, z: -1},
+                {x: 1, z: 1}, {x: 1, z: -1}, {x: -1, z: 1}, {x: -1, z: -1}
+            ];
+
+            directions.forEach(dir => {
+                // 기물의 현재 위치에서 1칸 옆 좌표 계산
+                const targetX = pieceMesh.position.x + (dir.x * tSize);
+                const targetZ = pieceMesh.position.z + (dir.z * tSize);
+
+                // 체스판 경계선 안쪽일 때만 동그라미 생성 (판 밖으로 나가는 거 방지)
+                if (Math.abs(targetX) <= 4 * tSize && Math.abs(targetZ) <= 4 * tSize) {
+                    // 원판(링) 모양의 3D 지오메트리 생성
+                    const guideGeo = new THREE.RingGeometry(0.2, 0.35, 16);
+                    // 밟으면 빛나는 느낌의 뚫리는 야광 초록색 재질
+                    const guideMat = new THREE.MeshBasicMaterial({ 
+                        color: 0x00ffcc, 
+                        side: THREE.DoubleSide,
+                        transparent: true,
+                        opacity: 0.8
+                    });
+                    const guideMesh = new THREE.Mesh(guideGeo, guideMat);
+                    
+                    // 링이 바닥 타일 위에 평평하게 눕도록 90도 회전
+                    guideMesh.rotation.x = Math.PI / 2;
+                    // 바닥 타일보다 살짝 위(y=0.1)에 띄워서 안 겹치게 배치
+                    guideMesh.position.set(targetX, 0.1, targetZ);
+                    
+                    // 레이캐스터 픽업용 플래그 주입
+                    guideMesh.userData = { isMoveGuide: true };
+
+                    scene.add(guideMesh);
+                    moveGuides.push(guideMesh); // 관리 배열에 추가
+                }
+            });
+        }
+
+        // 가이드 동그라미들을 화면에서 흔적도 없이 지우는 함수
+        function clearMoveGuides() {
+            moveGuides.forEach(g => scene.remove(g));
+            moveGuides = [];
+        }
+
+        // 터치 제어 마스터 핸들러
+        function handleTacticalTouchWithGuide(event) {
+            localMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            localMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            localRaycaster.setFromCamera(localMouse, camera);
+
+            const intersects = localRaycaster.intersectObjects(scene.children);
+            if (intersects.length === 0) return;
+
+            const clickedObj = intersects[0].object;
+
+            // 분기 1: [이동 칸 선택 모드]일 때
+            if (isSelectingMoveTile) {
+                // 유저가 초록색 네온 동그라미 가이드를 정확히 찔렀는지 판별!
+                if (clickedObj.userData && clickedObj.userData.isMoveGuide) {
+                    reservedTargetTile = clickedObj.position.clone(); // 동그라미 좌표 선점
+                    isSelectingMoveTile = false;
+                    
+                    clearMoveGuides(); // 이동지를 골랐으니 동그라미 숨기기
+                    alert("📍 이동할 가이드 칸 예약 성공!");
+                    checkTrueActionsCompletionWithGuide();
+                } else {
+                    alert("초록색 네온 동그라미 가이드 중 한 곳을 터치해 주세요!");
+                }
+                return;
+            }
+
+            // 분기 2: [공격 모드]일 때
+            if (isSelectingAttackTile) {
+                isSelectingAttackTile = false;
+                alert("🎯 공격 범위 타겟 예약 완료!");
+                checkTrueActionsCompletionWithGuide();
+                return;
+            }
+
+            // 분기 3: 일반 상태에서 내 기물 클릭 시 파일 메뉴 팝업
+            if (typeof renderPieces !== 'undefined' && renderPieces.includes(clickedObj)) {
+                const pIdx = renderPieces.indexOf(clickedObj);
+                
+                if (pIdx < 16) { // 백진영 기물 락인
+                    currentPieceData = { mesh: clickedObj, index: pIdx };
+                    
+                    const screenPos = clickedObj.position.clone().project(camera);
+                    const x = (screenPos.x * .5 + .5) * window.innerWidth;
+                    const y = (screenPos.y * -.5 + .5) * window.innerHeight;
+
+                    const menu = document.getElementById('mobileContextMenu');
+                    if (menu) {
+                        menu.style.left = `${x + 25}px`;
+                        menu.style.top = `${y - 35}px`;
+                        menu.style.display = 'flex';
+                    }
+                    
+                    bookedActions = [];
+                    reservedTargetTile = null;
+                    clearMoveGuides();
+                    updateTrueTrackerWithGuide();
+                }
+            }
+        }
+
+        // 파일 메뉴 버튼 매핑
+        function setupGuideMenuEvents() {
+            const menu = document.getElementById('mobileContextMenu');
+            if (!menu) return;
+
+            document.getElementById('mBtnMove').onclick = function(e) {
+                e.stopPropagation();
+                menu.style.display = 'none';
+                
+                bookedActions.push("이동");
+                updateTrueTrackerWithGuide();
+                
+                // 🔥 이동을 누르는 순간 기물 주변에 동그라미 가이드 쫙 오픈!
+                if (currentPieceData) {
+                    showMoveGuides(currentPieceData.mesh);
+                }
+                isSelectingMoveTile = true;
+            };
+
+            document.getElementById('mBtnAttack').onclick = function(e) {
+                e.stopPropagation();
+                menu.style.display = 'none';
+                
+                bookedActions.push("공격");
+                updateTrueTrackerWithGuide();
+                
+                alert("⚔️ 공격 사거리에 꽂아 넣을 타겟 타일을 터치하세요!");
+                isSelectingAttackTile = true;
+            };
+        }
+
+        // 트래커 상태창 리프레시
+        function updateTrueTrackerWithGuide() {
+            const trackTxt = document.getElementById('trackTxt');
+            if (!trackTxt) return;
+
+            if (bookedActions.length === 0) {
+                trackTxt.innerHTML = `<b style='color:#aaa;'>기물 선택 대기 중</b>`;
+            } else if (bookedActions.length === 1) {
+                trackTxt.innerHTML = `<span style='color:#00ffcc; font-weight:bold;'>[백 1번]: ${bookedActions[0]}</span> ➡️ <b style='color:#ffcc00;'>[2번 예약 대기]</b>`;
+            } else if (bookedActions.length === 2) {
+                trackTxt.innerHTML = `<span style='color:#00ffcc; font-weight:bold;'>[백 1번]: ${bookedActions[0]}</span> ➡️ <span style='color:#ff0055; font-weight:bold;'>[백 2번]: ${bookedActions[1]}</span>`;
+            }
+        }
+
+        // 두 행동 모두 완료 시 시뮬레이터 및 기물 진짜 3D 이동 반영
+        function checkTrueActionsCompletionWithGuide() {
+            if (bookedActions.length >= 2) {
+                setTimeout(() => {
+                    const bot1 = Math.random() > 0.5 ? "이동" : "공격";
+                    const bot2 = bot1 === "이동" ? "공격" : "이동";
+
+                    let log = `⚡ [심리전 예약 교차 실행 발동!]\n\n`;
+                    log += `1️⃣ [백 1번]: 백선수 ${bookedActions[0]} 개시!\n`;
+                    log += `2️⃣ [흑 1번]: 흑선수(AI) ${bot1} 개시!\n`;
+                    log += `3️⃣ [백 2번]: 백선수 ${bookedActions[1]} 개시!\n`;
+                    log += `4️⃣ [흑 2번]: 흑선수(AI) ${bot2} 개시!\n\n`;
+                    log += `🎬 [실시간 반영]: 예약 대결이 완료되어 기물이 선택한 가이드 칸으로 진짜 이동합니다!`;
+
+                    alert(log);
+
+                    // 진짜로 3D 공간 상에서 기물 슥 이동 처리
+                    if (reservedTargetTile && currentPieceData) {
+                        currentPieceData.mesh.position.x = reservedTargetTile.x;
+                        currentPieceData.mesh.position.z = reservedTargetTile.z;
+                        currentPieceData.mesh.position.y = 0.45; // 기물 착지 안착
+                    }
+
+                    // 초기화
+                    bookedActions = [];
+                    reservedTargetTile = null;
+                    currentPieceData = null;
+                    clearMoveGuides();
+                    updateTrueTrackerWithGuide();
+
+                }, 300);
+            } else {
+                // 행동 1개만 정했으면 마저 행동 2 채우라고 메뉴 복귀
+                setTimeout(() => {
+                    if (currentPieceData) {
+                        const screenPos = currentPieceData.mesh.position.clone().project(camera);
+                        const x = (screenPos.x * .5 + .5) * window.innerWidth;
+                        const y = (screenPos.y * -.5 + .5) * window.innerHeight;
+                        const menu = document.getElementById('mobileContextMenu');
+                        if (menu) {
+                            menu.style.left = `${x + 25}px`;
+                            menu.style.top = `${y - 35}px`;
+                            menu.style.display = 'flex';
+                        }
+                    }
+                }, 450);
+            }
+        }
+    })();
+</script>
