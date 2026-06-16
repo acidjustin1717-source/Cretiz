@@ -311,3 +311,261 @@
 </body>
 </html>
 
+
+<style>
+    /* 📋 백1, 백2 행동 예약 트래커를 점수판 밑에 이쁘게 안착 */
+    #reservationTracker {
+        position: absolute !important;
+        top: 145px !important;
+        left: 20px !important;
+        background: rgba(15, 17, 26, 0.95) !important;
+        border: 2px solid #ffcc00 !important;
+        color: #ffcc00 !important;
+        padding: 10px 14px !important;
+        border-radius: 8px !important;
+        font-size: 0.9rem !important;
+        font-weight: bold !important;
+        z-index: 9999 !important;
+        box-shadow: 0 4px 15px rgba(255, 204, 0, 0.2) !important;
+        display: block !important;
+    }
+
+    /* 📱 기물 터치 시 그 자리에 동둥 뜰 모바일 전용 수기 명령 팝업 */
+    #mobileContextMenu {
+        position: absolute; z-index: 5000; display: none;
+        flex-direction: column; gap: 6px; background: rgba(10, 11, 18, 0.95);
+        border: 2px solid #00ffcc; padding: 8px; border-radius: 8px;
+        box-shadow: 0 5px 15px rgba(0,255,204,0.4); pointer-events: auto;
+    }
+    .menu-item-btn {
+        padding: 8px 16px; border: none; background: #1a1d29; color: #fff;
+        font-weight: bold; font-size: 0.9rem; border-radius: 4px; cursor: pointer;
+        text-align: center; white-space: nowrap; min-width: 100px;
+    }
+    .menu-item-btn:active { background: #00ffcc; color: #000; }
+</style>
+
+<div id="reservationTracker">
+    📋 현재 예약 상태: <span id="trackTxt">대기 중</span>
+</div>
+
+<div id="mobileContextMenu">
+    <button class="menu-item-btn" id="mBtnMove">🏃 이동하기</button>
+    <button class="menu-item-btn" id="mBtnAttack">⚔️ 공격하기</button>
+</div>
+
+<script>
+    (function() {
+        let bookedActions = [];         // 예약 행동 스택
+        let reservedTargetTile = null;   // 예약된 이동/공격 3D 좌표
+        let currentPieceData = null;     // 선택한 아군 기물 메쉬
+        
+        let isSelectingMoveTile = false;
+        let isSelectingAttackTile = false;
+        let tacticalGuides = [];         // 네온 가이드 링 오브젝트들
+        
+        const localRaycaster = new THREE.Raycaster();
+        const localMouse = new THREE.Vector2();
+        const tSize = 1.15; // 체스판 1칸 규격
+
+        // 승현이의 오리지널 3D 변수(cScene, cRenderer, allPieces)가 로드될 때까지 실시간 감시 대기
+        const syncEngine = setInterval(() => {
+            if (typeof cRenderer !== 'undefined' && typeof cScene !== 'undefined' && typeof cCamera !== 'undefined' && typeof allPieces !== 'undefined') {
+                clearInterval(syncEngine);
+
+                // 구버전 터치 리스너와 충돌하지 않도록 메인 캔버스 이벤트를 완전 독점 클론 교체
+                const oldCanvas = cRenderer.domElement;
+                const newCanvas = oldCanvas.cloneNode(true);
+                oldCanvas.parentNode.replaceChild(newCanvas, oldCanvas);
+
+                // 새 깨끗한 캔버스에 터치 및 팝업 메뉴 바인딩
+                newCanvas.addEventListener('pointerdown', onTacticalChessTouch);
+                setupTacticalMenuEvents();
+
+                // 검은 화면 버그를 완전히 깨우기 위한 강제 리사이즈 및 재렌더링 트리거
+                window.dispatchEvent(new Event('resize'));
+                cRenderer.render(cScene, cCamera);
+                
+                console.log("💥 승현이의 cScene 엔진 변수들과 Chess.com 가이드 완벽 동기화 완료!");
+            }
+        }, 300);
+
+        // Chess.com 스타일: 사방 1칸 유효 범위 안에만 네온 동그라미 뿌려주는 알고리즘
+        function spawnTacticalGuides(pieceMesh, mode) {
+            clearTacticalGuides();
+
+            // 체스판에 깔려있는 순수 바닥 타일들을 맵에서 전수 수집
+            let boardTiles = [];
+            cScene.children.forEach(obj => {
+                if (obj.geometry && obj.geometry.type === "BoxGeometry" && !allPieces.includes(obj)) {
+                    boardTiles.push(obj);
+                }
+            });
+
+            boardTiles.forEach(tile => {
+                const diffX = Math.abs(tile.position.x - pieceMesh.position.x);
+                const diffZ = Math.abs(tile.position.z - pieceMesh.position.z);
+
+                // 앞, 뒤, 좌, 우, 대각선 주변 1칸 범위 판정 규칙
+                if (diffX <= tSize * 1.1 && diffZ <= tSize * 1.1 && !(diffX === 0 && diffZ === 0)) {
+                    const guideGeo = new THREE.RingGeometry(0.18, 0.35, 16);
+                    const guideColor = (mode === "이동") ? 0x00ffcc : 0xff0055; // 이동은 초록색, 공격은 빨간색
+                    const guideMat = new THREE.MeshBasicMaterial({
+                        color: guideColor, side: THREE.DoubleSide, transparent: true, opacity: 0.85
+                    });
+                    const guideMesh = new THREE.Mesh(guideGeo, guideMat);
+                    
+                    guideMesh.rotation.x = Math.PI / 2; // 바닥에 눕히기
+                    guideMesh.position.set(tile.position.x, 0.08, tile.position.z); // 타일보다 살짝 위에 배치
+                    
+                    // 터치 다운 감지용 메타데이터 심기
+                    guideMesh.userData = { isTacticalGuide: true, associatedTilePos: tile.position.clone() };
+                    
+                    cScene.add(guideMesh);
+                    tacticalGuides.push(guideMesh);
+                }
+            });
+        }
+
+        function clearTacticalGuides() {
+            tacticalGuides.forEach(g => cScene.remove(g));
+            tacticalGuides = [];
+        }
+
+        // 터치 컨트롤 마스터 인터셉터
+        function onTacticalChessTouch(event) {
+            localMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            localMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            localRaycaster.setFromCamera(localMouse, cCamera);
+
+            const intersects = localRaycaster.intersectObjects(cScene.children);
+            if (intersects.length === 0) return;
+
+            const clickedObj = intersects[0].object;
+
+            // [가이드 링 선택 모드]
+            if (isSelectingMoveTile || isSelectingAttackTile) {
+                if (clickedObj.userData && clickedObj.userData.isTacticalGuide) {
+                    reservedTargetTile = clickedObj.userData.associatedTilePos.clone();
+                    const currentMode = isSelectingMoveTile ? "이동" : "공격";
+                    isSelectingMoveTile = false;
+                    isSelectingAttackTile = false;
+                    
+                    clearTacticalGuides();
+                    alert(`📍 [백 ${bookedActions.length}번 행동]: ${currentMode} 할 가이드 칸 지정 완료!`);
+                    executeTacticalTurnResolution();
+                } else {
+                    alert("표시된 동그라미 가이드 중 한 곳을 정확히 터치해 주세요!");
+                }
+                return;
+            }
+
+            // [일반 모드] 내 백진영 기물 클릭 시 메뉴 팝업
+            if (allPieces.includes(clickedObj)) {
+                const pIdx = allPieces.indexOf(clickedObj);
+                
+                if (pIdx < 16) { // 백진영 기물만 선택 가능 조치
+                    currentPieceData = { mesh: clickedObj, index: pIdx };
+                    
+                    // 3D 월드 좌표를 화면상의 2D 픽셀 좌표로 변환 연산
+                    const screenPos = clickedObj.position.clone().project(cCamera);
+                    const x = (screenPos.x * .5 + .5) * window.innerWidth;
+                    const y = (screenPos.y * -.5 + .5) * window.innerHeight;
+
+                    const menu = document.getElementById('mobileContextMenu');
+                    if (menu) {
+                        menu.style.left = `${x + 25}px`;
+                        menu.style.top = `${y - 35}px`;
+                        menu.style.display = 'flex';
+                    }
+                    
+                    bookedActions = [];
+                    reservedTargetTile = null;
+                    clearTacticalGuides();
+                    refreshTacticalTracker();
+                }
+            }
+        }
+
+        // 팝업 메뉴 버튼 연동
+        function setupTacticalMenuEvents() {
+            const menu = document.getElementById('mobileContextMenu');
+            if (!menu) return;
+
+            document.getElementById('mBtnMove').onclick = function(e) {
+                e.stopPropagation(); menu.style.display = 'none';
+                bookedActions.push("이동"); refreshTacticalTracker();
+                isSelectingMoveTile = true;
+                if (currentPieceData) spawnTacticalGuides(currentPieceData.mesh, "이동");
+            };
+
+            document.getElementById('mBtnAttack').onclick = function(e) {
+                e.stopPropagation(); menu.style.display = 'none';
+                bookedActions.push("공격"); refreshTacticalTracker();
+                isSelectingAttackTile = true;
+                if (currentPieceData) spawnTacticalGuides(currentPieceData.mesh, "공격");
+            };
+        }
+
+        function refreshTacticalTracker() {
+            const trackTxt = document.getElementById('trackTxt');
+            if (!trackTxt) return;
+            if (bookedActions.length === 0) trackTxt.innerHTML = `<b style='color:#aaa;'>기물 선택 대기 중</b>`;
+            else if (bookedActions.length === 1) trackTxt.innerHTML = `<span style='color:#00ffcc;'>[백 1번]: ${bookedActions[0]} 완료</span> ➡️ <b style='color:#ffcc00;'>[2번 대기]</b>`;
+            else if (bookedActions.length === 2) trackTxt.innerHTML = `<span style='color:#00ffcc;'>[백 1번]: ${bookedActions[0]}</span> ➡️ <span style='color:#ff0055;'>[백 2번]: ${bookedActions[1]}</span>`;
+        }
+
+        // 예약 결산 및 기물 최종 3D 좌표 안착 처리
+        function executeTacticalTurnResolution() {
+            if (bookedActions.length >= 2) {
+                setTimeout(() => {
+                    const bot1 = Math.random() > 0.5 ? "이동" : "공격";
+                    const bot2 = bot1 === "이동" ? "공격" : "이동";
+
+                    let finalLog = `⚡ [심리 예측 동시 교차 실행]\n\n`;
+                    finalLog += `1️⃣ [백 1번]: 백선수 ${bookedActions[0]} 진행!\n`;
+                    finalLog += `2️⃣ [흑 1번]: 흑선수(AI) ${bot1} 진행!\n`;
+                    finalLog += `3️⃣ [백 2번]: 백선수 ${bookedActions[1]} 진행!\n`;
+                    finalLog += `4️⃣ [흑 2번]: 흑선수(AI) ${bot2} 진행!\n\n`;
+                    finalLog += `🎬 연산 완료: 유저가 콕 찍은 Chess.com 가이드 동그라미 칸으로 기물이 진짜 이동합니다!`;
+
+                    alert(finalLog);
+
+                    // 진짜 기물을 선택한 가이드 좌표로 순간이동 슛!
+                    if (reservedTargetTile && currentPieceData) {
+                        currentPieceData.mesh.position.x = reservedTargetTile.x;
+                        currentPieceData.mesh.position.z = reservedTargetTile.z;
+                        currentPieceData.mesh.position.y = 0.275; // 기물 원래 안착 높이
+                    }
+
+                    // 초기화 후 다음 턴 준비
+                    bookedActions = []; reservedTargetTile = null; currentPieceData = null;
+                    clearTacticalGuides(); refreshTacticalTracker();
+                }, 300);
+            } else {
+                // 백2 지정을 위해 팝업 메뉴 재소환
+                setTimeout(() => {
+                    if (currentPieceData) {
+                        const screenPos = currentPieceData.mesh.position.clone().project(cCamera);
+                        const menu = document.getElementById('mobileContextMenu');
+                        if (menu) {
+                            menu.style.left = `${((screenPos.x * .5 + .5) * window.innerWidth) + 25}px`;
+                            menu.style.top = `${((screenPos.y * -.5 + .5) * window.innerHeight) - 35}px`;
+                            menu.style.display = 'flex';
+                        }
+                    }
+                }, 450);
+            }
+        }
+
+        // 가이드 링이 살짝씩 돌게 만드는 서브 루프 프레임 렌더러 추가
+        function renderGuideLoop() {
+            requestAnimationFrame(renderGuideLoop);
+            tacticalGuides.forEach(g => { g.rotation.z += 0.02; });
+            if (typeof cRenderer !== 'undefined' && typeof cScene !== 'undefined' && typeof cCamera !== 'undefined') {
+                cRenderer.render(cScene, cCamera);
+            }
+        }
+        renderGuideLoop();
+    })();
+</script>
