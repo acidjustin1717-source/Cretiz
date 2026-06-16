@@ -1,0 +1,440 @@
+<style>
+    #dacUiOverlay {
+        position: absolute; top: 15px; left: 15px;
+        background: rgba(10, 12, 22, 0.95); padding: 15px 20px; border-radius: 10px;
+        border: 2px solid #00ffcc; color: #fff; font-family: 'Malgun Gothic', sans-serif;
+        z-index: 9999; box-shadow: 0 4px 20px rgba(0, 255, 204, 0.3); pointer-events: none;
+    }
+    #dacUiOverlay h2 { margin: 0 0 5px 0; color: #00ffcc; font-size: 1.3rem; letter-spacing: 1px; }
+    #dacUiOverlay .win-condition { color: #ffcc00; font-size: 0.8rem; margin-bottom: 10px; font-weight: bold; }
+    .dac-score-row { display: flex; gap: 25px; font-size: 1.05rem; font-weight: bold; margin-bottom: 8px; }
+    .score-blue { color: #33ccff; }
+    .score-red { color: #ff3366; }
+    #dacStatus { font-size: 0.9rem; color: #a0aec0; border-top: 1px solid #2d3748; padding-top: 8px; margin-top: 5px; }
+
+    #dacTracker {
+        position: absolute; top: 160px; left: 15px;
+        background: rgba(15, 18, 32, 0.9); border: 2px solid #ffcc00;
+        color: #ffcc00; padding: 10px 15px; border-radius: 8px;
+        font-size: 0.85rem; font-weight: bold; z-index: 9999;
+        box-shadow: 0 4px 15px rgba(255, 204, 0, 0.2); pointer-events: none;
+    }
+
+    #dacContextMenu {
+        position: absolute; z-index: 9999; display: none;
+        flex-direction: column; gap: 5px; background: rgba(8, 10, 18, 0.95);
+        border: 2px solid #00ffcc; padding: 8px; border-radius: 8px;
+        box-shadow: 0 5px 20px rgba(0,255,204,0.5); pointer-events: auto;
+    }
+    .dac-menu-btn {
+        padding: 8px 14px; border: none; background: #161b2e; color: #fff;
+        font-weight: bold; font-size: 0.85rem; border-radius: 4px; cursor: pointer;
+        text-align: left; white-space: nowrap; min-width: 110px; transition: all 0.1s;
+    }
+    .dac-menu-btn:active { background: #00ffcc; color: #000; }
+    .dac-menu-btn:disabled { background: #2d3748; color: #718096; cursor: not-allowed; }
+</style>
+
+<div id="dacUiOverlay">
+    <h2>Dual Action Chess</h2>
+    <div class="win-condition">🏆 27점 선점 또는 50턴 종료 시 승리</div>
+    <div class="dac-score-row">
+        <span class="score-blue">백(BLUE): <b id="dacScoreW">0</b> / 27</span>
+        <span class="score-red">흑(RED): <b id="dacScoreB">0</b> / 27</span>
+    </div>
+    <div id="dacTurnCount">현재 진행: 1 / 50 턴</div>
+    <div id="dacStatus">전장 대기 중... (백선수 기물 선택)</div>
+</div>
+
+<div id="dacTracker">
+    📋 예약 현황: <span id="dacTrackTxt">기물을 터치하세요</span>
+</div>
+
+<div id="dacContextMenu">
+    <button class="dac-menu-btn" id="dacBtnMove">🏃 이동하기</button>
+    <button class="dac-menu-btn" id="dacBtnAttack">⚔️ 공격하기</button>
+    <button class="dac-menu-btn" id="dacBtnSpecial">🧱 특수 능력</button>
+</div>
+
+<script>
+    (function() {
+        let currentTurn = 1;
+        let scoreW = 0, scoreB = 0;
+        
+        let bookedActions = [];         
+        let bookedTargets = [];         
+        let activePiece = null;         
+        
+        let selectMode = null;          
+        let tacticalGuides = [];        
+        let wallObjects = [];           
+        
+        const localRaycaster = new THREE.Raycaster();
+        const localMouse = new THREE.Vector2();
+        const T_SCALE = 1.15;           
+
+        const bootWatchdog = setInterval(() => {
+            if (typeof cRenderer !== 'undefined' && typeof cScene !== 'undefined' && typeof cCamera !== 'undefined' && typeof allPieces !== 'undefined') {
+                clearInterval(bootWatchdog);
+                initPieceStatusData();   
+                interceptCanvasEvents(); 
+                setupMenuEvents();       
+                console.log("👑 [Gemini Core v3] 렌더 루프 분리 및 데이터 보존 튜닝 완료!");
+            }
+        }, 200);
+
+        function initPieceStatusData() {
+            allPieces.forEach((mesh, idx) => {
+                let type = 'pawn';
+                let hp = 1, atk = 1, score = 1;
+                
+                if (idx === 0 || idx === 7 || idx === 16 || idx === 23) { type = 'rook'; hp = 3; atk = 1; score = 3; }
+                else if (idx === 1 || idx === 6 || idx === 17 || idx === 22) { type = 'knight'; hp = 3; atk = 2; score = 3; }
+                else if (idx === 2 || idx === 5 || idx === 18 || idx === 21) { type = 'bishop'; hp = 1; atk = 3; score = 3; }
+                else if (idx === 3 || idx === 19) { type = 'queen'; hp = 3; atk = 2; score = 5; } 
+                else if (idx === 4 || idx === 20) { type = 'king'; hp = 5; atk = 1; score = 8; }
+
+                mesh.userData = {
+                    type: type,
+                    side: (idx < 16) ? 'W' : 'B',
+                    index: idx,
+                    maxHp: hp,
+                    hp: hp,
+                    atk: atk,
+                    score: score,
+                    isStunned: false,
+                    ammo: (type === 'queen') ? 2 : 0,
+                    cooldown: 0,
+                    isSuperPawn: false,
+                    originPos: mesh.position.clone() 
+                };
+            });
+
+            // [수정 포인트 2]: 기존 객체 덮어쓰지 않고 타겟 기물의 세부 스탯 속성만 정밀 수정 (데이터 보존)
+            const randomPawnW = Math.floor(Math.random() * 8) + 8;
+            const randomPawnB = Math.floor(Math.random() * 8) + 24;
+            
+            [randomPawnW, randomPawnB].forEach(pIdx => {
+                if(allPieces[pIdx]) {
+                    let ud = allPieces[pIdx].userData;
+                    ud.isSuperPawn = true; ud.hp = 2; ud.maxHp = 2; ud.atk = 2; ud.score = 2;
+                }
+            });
+        }
+
+        function interceptCanvasEvents() {
+            const oldCanvas = cRenderer.domElement;
+            const newCanvas = oldCanvas.cloneNode(true);
+            oldCanvas.parentNode.replaceChild(newCanvas, oldCanvas);
+            newCanvas.addEventListener('pointerdown', onBoardTouch);
+            cRenderer.domElement = newCanvas;
+            window.dispatchEvent(new Event('resize'));
+        }
+
+        function onBoardTouch(e) {
+            localMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            localMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            localRaycaster.setFromCamera(localMouse, cCamera);
+
+            const intersects = localRaycaster.intersectObjects(cScene.children, true);
+            if (intersects.length === 0) return;
+
+            const clicked = intersects[0].object;
+
+            if (selectMode) {
+                if (clicked.userData && clicked.userData.isTacticalGuide) {
+                    const finalTargetCoord = clicked.userData.targetPos.clone();
+                    bookedTargets.push(finalTargetCoord);
+                    
+                    clearTacticalGuides();
+                    selectMode = null;
+                    
+                    if (bookedActions.length === 2) {
+                        resolveTurnQueue(); 
+                    } else {
+                        document.getElementById('dacStatus').innerText = "📍 [액션 1 완료] 이어서 액션 2를 지정하세요.";
+                        updateTrackerUI();
+                        openMenuAtActivePiece();
+                    }
+                } else {
+                    alert("⚠️ 표시된 네온 가이드를 터치해 주세요.");
+                }
+                return;
+            }
+
+            if (allPieces.includes(clicked)) {
+                const data = clicked.userData;
+                if (data.side !== 'W') { alert("❌ 백진영 기물만 선택 가능합니다."); return; }
+                if (data.isStunned) { alert("💤 기절 상태입니다. 다음 턴에 움직일 수 있습니다."); return; }
+
+                activePiece = clicked;
+                bookedActions = [];
+                bookedTargets = [];
+                clearTacticalGuides();
+                updateTrackerUI();
+                openMenuAtActivePiece();
+            }
+        }
+
+        function openMenuAtActivePiece() {
+            if (!activePiece) return;
+            const projPos = activePiece.position.clone().project(cCamera);
+            const px = (projPos.x * .5 + .5) * window.innerWidth;
+            const py = (projPos.y * -.5 + .5) * window.innerHeight;
+
+            const menu = document.getElementById('dacContextMenu');
+            menu.style.left = `${px + 20}px`;
+            menu.style.top = `${py - 30}px`;
+            menu.style.display = 'flex';
+
+            const data = activePiece.userData;
+            document.getElementById('dacBtnAttack').disabled = (data.cooldown > 0);
+            document.getElementById('dacBtnSpecial').disabled = (data.type !== 'rook');
+        }
+
+        function spawnRangeGuides(mode) {
+            clearTacticalGuides();
+            selectMode = mode;
+
+            let boardTiles = [];
+            cScene.children.forEach(obj => {
+                if (obj.geometry && obj.geometry.type === "BoxGeometry" && !allPieces.includes(obj) && !wallObjects.includes(obj)) {
+                    boardTiles.push(obj);
+                }
+            });
+
+            const pData = activePiece.userData;
+
+            boardTiles.forEach(tile => {
+                const dx = Math.abs(tile.position.x - activePiece.position.x);
+                const dz = Math.abs(tile.position.z - activePiece.position.z);
+                const gridX = Math.round(dx / T_SCALE);
+                const gridZ = Math.round(dz / T_SCALE);
+
+                let isEligible = false;
+
+                if (mode === '이동') {
+                    if (pData.type === 'pawn' || pData.type === 'king') {
+                        if (gridX <= 1 && gridZ <= 1 && !(gridX === 0 && gridZ === 0)) isEligible = true;
+                    } else if (pData.type === 'knight') {
+                        if ((gridX === 1 && gridZ === 2) || (gridX === 2 && gridZ === 1)) isEligible = true;
+                    } else if (pData.type === 'bishop') {
+                        if (gridX === gridZ && gridX > 0) isEligible = true;
+                    } else if (pData.type === 'rook') {
+                        if (((gridX === 2 && gridZ === 0) || (gridX === 0 && gridZ === 2))) isEligible = true;
+                    } else if (pData.type === 'queen') {
+                        if ((gridX === gridZ || gridX === 0 || gridZ === 0) && Math.max(gridX, gridZ) <= 3 && Math.max(gridX, gridZ) > 0) isEligible = true;
+                    }
+                } else if (mode === '공격') {
+                    if (pData.type === 'pawn' || pData.type === 'king') {
+                        if (gridX <= 1 && gridZ <= 1 && !(gridX === 0 && gridZ === 0)) isEligible = true;
+                    } else if (pData.type === 'knight') {
+                        if (gridX <= 1 && gridZ <= 1 && !(gridX === 0 && gridZ === 0)) isEligible = true;
+                    } else if (pData.type === 'bishop') {
+                        if (gridX === gridZ && gridX > 0) isEligible = true;
+                    } else if (pData.type === 'rook') {
+                        if ((gridX === 2 && gridZ === 0) || (gridX === 0 && gridZ === 2)) isEligible = true;
+                    } else if (pData.type === 'queen') {
+                        if ((gridX === gridZ || gridX === 0 || gridZ === 0) && Math.max(gridX, gridZ) <= 2 && Math.max(gridX, gridZ) > 0) isEligible = true;
+                    }
+                } else if (mode === '특수' && pData.type === 'rook') {
+                    if (tile.position.z > 0) isEligible = true; 
+                }
+
+                if (isEligible) {
+                    const ringGeo = new THREE.RingGeometry(0.16, 0.33, 16);
+                    const color = (mode === '이동') ? 0x00ffcc : 0xff0055;
+                    const ringMat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
+                    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+                    
+                    ringMesh.rotation.x = Math.PI / 2;
+                    ringMesh.position.set(tile.position.x, 0.06, tile.position.z);
+                    ringMesh.userData = { isTacticalGuide: true, targetPos: tile.position.clone() };
+                    
+                    cScene.add(ringMesh);
+                    tacticalGuides.push(ringMesh);
+                }
+            });
+        }
+
+        function clearTacticalGuides() {
+            tacticalGuides.forEach(g => cScene.remove(g));
+            tacticalGuides = [];
+        }
+
+        function setupMenuEvents() {
+            const m = document.getElementById('dacContextMenu');
+            document.getElementById('dacBtnMove').onclick = (e) => { e.stopPropagation(); m.style.display='none'; bookedActions.push('이동'); updateTrackerUI(); spawnRangeGuides('이동'); };
+            document.getElementById('dacBtnAttack').onclick = (e) => { e.stopPropagation(); m.style.display='none'; bookedActions.push('공격'); updateTrackerUI(); spawnRangeGuides('공격'); };
+            document.getElementById('dacBtnSpecial').onclick = (e) => { e.stopPropagation(); m.style.display='none'; bookedActions.push('특수'); updateTrackerUI(); spawnRangeGuides('특수'); };
+        }
+
+        function updateTrackerUI() {
+            const txt = document.getElementById('dacTrackTxt');
+            if (bookedActions.length === 0) txt.innerHTML = "액션 1 대기 중";
+            else if (bookedActions.length === 1) txt.innerHTML = `<span style='color:#00ffcc;'>[백1]: ${bookedActions[0]}</span> ➡️ <b>[백2 대기]</b>`;
+            else if (bookedActions.length === 2) txt.innerHTML = `<span style='color:#00ffcc;'>[백1]: ${bookedActions[0]}</span> ➡️ <span style='color:#00ffcc;'>[백2]: ${bookedActions[1]}</span>`;
+        }
+
+        function resolveTurnQueue() {
+            document.getElementById('dacStatus').innerText = "⚡ 양측 예약 완적 적재! 연산 시뮬레이션 중...";
+
+            setTimeout(() => {
+                let validTiles = [];
+                cScene.children.forEach(obj => { if(obj.geometry && obj.geometry.type === "BoxGeometry" && !allPieces.includes(obj)) validTiles.push(obj.position.clone()); });
+                
+                let aliveBots = allPieces.filter((p, i) => i >= 16 && p.userData.hp > 0);
+                const botPiece = aliveBots.length > 0 ? aliveBots[Math.floor(Math.random() * aliveBots.length)] : allPieces[16];
+                
+                // [수정 포인트 4]: AI가 백군 기물이 서 있는 타일을 표적으로 인지하도록 타겟팅 풀 확장 보완
+                let aliveTargets = allPieces.filter(p => p.userData.hp > 0 && p.userData.side === 'W').map(p => p.position.clone());
+                let attackPool = aliveTargets.length > 0 ? aliveTargets : validTiles;
+
+                const botActions = ["이동", "공격"];
+                const botTargets = [
+                    validTiles.length > 0 ? validTiles[Math.floor(Math.random() * validTiles.length)] : botPiece.position.clone(),
+                    attackPool.length > 0 ? attackPool[Math.floor(Math.random() * attackPool.length)] : botPiece.position.clone()
+                ];
+
+                allPieces.forEach(p => { if (p.userData.side === 'W') p.userData.isStunned = false; });
+
+                const isOdd = currentTurn % 2 !== 0;
+                let log = `🎬 [제 ${currentTurn}턴 결산 최종 보고서]\n\n`;
+
+                const executionQueue = isOdd ? [
+                    { side: 'W', act: bookedActions[0], tgt: bookedTargets[0], mesh: activePiece },
+                    { side: 'B', act: botActions[0], tgt: botTargets[0], mesh: botPiece },
+                    { side: 'W', act: bookedActions[1], tgt: bookedTargets[1], mesh: activePiece },
+                    { side: 'B', act: botActions[1], tgt: botTargets[1], mesh: botPiece }
+                ] : [
+                    { side: 'B', act: botActions[0], tgt: botTargets[0], mesh: botPiece },
+                    { side: 'W', act: bookedActions[0], tgt: bookedTargets[0], mesh: activePiece },
+                    { side: 'B', act: botActions[1], tgt: botTargets[1], mesh: botPiece },
+                    { side: 'W', act: bookedActions[1], tgt: bookedTargets[1], mesh: activePiece }
+                ];
+
+                // 기존 방어벽들의 임시 수명 마감 및 시각적 청소
+                wallObjects.forEach(w => cScene.remove(w));
+                let activeWallsThisTurn = [...wallObjects]; // 이번 단계 궤적 판정용 복사본 보존
+                wallObjects = [];
+
+                executionQueue.forEach((step, qIdx) => {
+                    if (!step.mesh || step.mesh.userData.hp <= 0) return; 
+
+                    log += `${qIdx + 1}단계: [${step.side === 'W' ? '백군' : '흑군'}] ${step.act} ➡️ `;
+
+                    if (step.act === '이동') {
+                        let isCollision = false;
+                        executionQueue.forEach(other => {
+                            if (other !== step && other.act === '이동' && other.tgt.distanceTo(step.tgt) < 0.1) isCollision = true;
+                        });
+
+                        if (isCollision) {
+                            step.mesh.userData.isStunned = true;
+                            log += `💥 동시 충돌! 원래 위치 퇴거 및 다음 턴 기절.\n`;
+                        } else {
+                            step.mesh.position.copy(step.tgt);
+                            log += `성공.\n`;
+
+                            const zRow = Math.round(step.mesh.position.z / T_SCALE);
+                            if (step.mesh.userData.type === 'pawn' && ((step.side === 'W' && zRow === -4) || (step.side === 'B' && zRow === 3))) {
+                                step.mesh.userData.type = 'heropawn';
+                                step.mesh.userData.hp = 3; ud.maxHp = 3; ud.atk = 3; ud.score = 3;
+                                log += `    ✨ [히어로 진화] 풀피 각성!\n`;
+                            }
+                        }
+                    } else if (step.act === '공격') {
+                        // [수정 포인트 3]: 공격 기물 위치와 타겟 사이의 투사체 비행 궤적 선상에 벽이 걸리는지 벡터 대수학 정밀 수학 검증
+                        let isTrajectoryBlocked = false;
+                        activeWallsThisTurn.forEach(w => {
+                            let wallPos = w.position;
+                            let startPos = step.mesh.position;
+                            let endPos = step.tgt;
+                            
+                            let lineDist = startPos.distanceTo(endPos);
+                            if(lineDist > 0.01) {
+                                let cross = new THREE.Vector3().subVectors(wallPos, startPos).cross(new THREE.Vector3().subVectors(endPos, startPos)).length() / lineDist;
+                                let dot = new THREE.Vector3().subVectors(wallPos, startPos).dot(new THREE.Vector3().subVectors(endPos, startPos));
+                                if (cross < 0.4 && dot > 0 && dot < lineDist * lineDist) {
+                                    isTrajectoryBlocked = true;
+                                }
+                            }
+                        });
+
+                        if (isTrajectoryBlocked) {
+                            if (step.mesh.userData.type === 'bishop') {
+                                step.mesh.userData.hp = 0;
+                                cScene.remove(step.mesh);
+                                log += `🔮 [도탄 즉사] 비숍의 광선이 궤적 상의 룩의 방어벽에 직격하여 자폭 즉사했습니다!\n`;
+                            } else {
+                                log += `🧱 방어벽에 가로막혀 공격 탄도가 완전 차단되었습니다(데미지 무효).\n`;
+                            }
+                            return;
+                        }
+
+                        if (step.mesh.userData.type === 'queen') {
+                            step.mesh.userData.ammo--;
+                            if(step.mesh.userData.ammo <= 0) {
+                                step.mesh.userData.cooldown = 2; 
+                                step.mesh.userData.ammo = 2; 
+                            }
+                        }
+
+                        allPieces.forEach(victim => {
+                            if (victim.userData.hp > 0 && victim.userData.side !== step.side) {
+                                if (victim.position.distanceTo(step.tgt) < T_SCALE * 1.2) {
+                                    victim.userData.hp -= step.mesh.userData.atk;
+                                    log += `${victim.userData.type} 피격(-${step.mesh.userData.atk}) `;
+                                    
+                                    if (victim.userData.hp <= 0) {
+                                        cScene.remove(victim);
+                                        if (step.side === 'W') scoreW += victim.userData.score;
+                                        else scoreB += victim.userData.score;
+                                        log += `💀 격파! (+${victim.userData.score}점) `;
+                                    }
+                                }
+                            }
+                        });
+                        log += `완료.\n`;
+                    } else if (step.act === '특수' && step.mesh.userData.type === 'rook') {
+                        const wallGeo = new THREE.BoxGeometry(T_SCALE - 0.2, 0.6, 0.2);
+                        const wallMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, metalness: 0.8, roughness: 0.1 });
+                        const wallMesh = new THREE.Mesh(wallGeo, wallMat);
+                        wallMesh.position.copy(step.tgt);
+                        cScene.add(wallMesh);
+                        wallObjects.push(wallMesh);
+                        log += `🧱 방어벽 배치 성공!\n`;
+                    }
+                });
+
+                alert(log);
+
+                allPieces.forEach(p => { if (p.userData.cooldown > 0) p.userData.cooldown--; });
+
+                document.getElementById('dacScoreW').innerText = scoreW;
+                document.getElementById('dacScoreB').innerText = scoreB;
+                
+                currentTurn++;
+                document.getElementById('dacTurnCount').innerText = `현재 진행: ${currentTurn} / 50 턴`;
+
+                if (scoreW >= 27 || scoreB >= 27 || currentTurn > 50) {
+                    alert(`🏁 매치 종료!\n최종 승리: ${scoreW > scoreB ? 'BLUE' : 'RED'}`);
+                    location.reload();
+                    return;
+                }
+
+                bookedActions = []; bookedTargets = []; activePiece = null;
+                document.getElementById('dacStatus').innerText = "전장 대기 중... (기물 선택)";
+                updateTrackerUI();
+            }, 400);
+        }
+
+        // [수정 포인트 1]: 무한 이중 렌더링을 유발하던 cRenderer.render 차단 및 가이드 링 자전 연산만 격리 가동
+        function dacRenderLoop() {
+            requestAnimationFrame(dacRenderLoop);
+            tacticalGuides.forEach(g => { g.rotation.z += 0.03; });
+        }
+        dacRenderLoop();
+    })();
+</script>
+
