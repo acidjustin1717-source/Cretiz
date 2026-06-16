@@ -875,3 +875,193 @@
         }
     }
 </script>
+
+<!-- 여기서부터 맨 밑바닥에 무작정 이어 붙이세요 -->
+<script>
+    // 기존에 붙였던 모바일 스크립트들과의 충돌을 방지하기 위해 완벽히 격리된 스코프 가동
+    (function() {
+        let bookedActions = [];      // ['이동', '공격'] 예약 상태 보관함
+        let reservedTargetTile = null; // 예약된 이동 목표 3D 좌표 저장소
+        let currentPieceData = null;   // 현재 선택해서 명령 내리는 기물 정보
+        
+        let isSelectingMoveTile = false;  // 이동할 칸을 고르는 상태인가?
+        let isSelectingAttackTile = false; // 공격할 칸을 고르는 상태인가?
+
+        const localRaycaster = new THREE.Raycaster();
+        const localMouse = new THREE.Vector2();
+
+        // 메인 3D 엔진이 로드되었는지 확인 후 마우스/터치 이벤트 가로채기(인터셉트)
+        const initTrueMoveEngine = setInterval(() => {
+            if (typeof renderer !== 'undefined' && typeof camera !== 'undefined' && typeof scene !== 'undefined') {
+                clearInterval(initTrueMoveEngine);
+
+                // 기존에 꼬여있던 이벤트들을 싹 날리기 위해 캔버스 복제 교체
+                const oldCanvas = renderer.domElement;
+                const newCanvas = oldCanvas.cloneNode(true);
+                oldCanvas.parentNode.replaceChild(newCanvas, oldCanvas);
+
+                // 새 깨끗한 캔버스에 터치다운 이벤트 하나로 통합 관리
+                newCanvas.addEventListener('pointerdown', handleTacticalTouch);
+                
+                // 메뉴 버튼 기능 재연결
+                setupTrueMenuEvents();
+                console.log("체스식 타일 터치 이동 및 실시간 기물 렌더링 엔진 동기화 완료.");
+            }
+        }, 350);
+
+        // 모든 터치/클릭을 중앙에서 통제하는 마스터 컨트롤러
+        function handleTacticalTouch(event) {
+            localMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            localMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            localRaycaster.setFromCamera(localMouse, camera);
+
+            const intersects = localRaycaster.intersectObjects(scene.children);
+            if (intersects.length === 0) return;
+
+            const clickedObj = intersects[0].object;
+
+            // 분기 1: [이동할 칸 선택 모드]일 때 바닥 타일을 누른 경우
+            if (isSelectingMoveTile) {
+                // 클릭한 게 기물이 아니라 바닥 타일(MeshStandardMaterial을 가진 판때기)인지 체크
+                if (clickedObj.geometry.type === "BoxGeometry" && !renderPieces.includes(clickedObj)) {
+                    reservedTargetTile = clickedObj.position.clone(); // 그 칸의 3D 좌표를 예약 선점
+                    isSelectingMoveTile = false;
+                    
+                    alert("📍 이동 목표 칸 예약 완료!");
+                    checkTrueActionsCompletion();
+                } else {
+                    alert("체스판의 빈 칸(타일)을 정확히 선택해 주세요!");
+                }
+                return;
+            }
+
+            // 분기 2: [공격할 칸 선택 모드]일 때
+            if (isSelectingAttackTile) {
+                isSelectingAttackTile = false;
+                alert("🎯 공격 목표 타겟 예약 완료!");
+                checkTrueActionsCompletion();
+                return;
+            }
+
+            // 분기 3: 일반 상태에서 내 기물(백진영)을 클릭했을 때 파일 메뉴 소환
+            if (typeof renderPieces !== 'undefined' && renderPieces.includes(clickedObj)) {
+                const pIdx = renderPieces.indexOf(clickedObj);
+                
+                if (pIdx < 16) { // 백진영 블루 기물만 선택 가능 조율
+                    currentPieceData = { mesh: clickedObj, index: pIdx };
+                    
+                    // 기물 머리맡에 컴퓨터 파일 메뉴 조환 정렬
+                    const screenPos = clickedObj.position.clone().project(camera);
+                    const x = (screenPos.x * .5 + .5) * window.innerWidth;
+                    const y = (screenPos.y * -.5 + .5) * window.innerHeight;
+
+                    const menu = document.getElementById('mobileContextMenu');
+                    if (menu) {
+                        menu.style.left = `${x + 25}px`;
+                        menu.style.top = `${y - 35}px`;
+                        menu.style.display = 'flex';
+                    }
+                    
+                    bookedActions = [];
+                    reservedTargetTile = null;
+                    updateTrueTracker();
+                }
+            }
+        }
+
+        // 파일 메뉴 버튼 작동 연동
+        function setupTrueMenuEvents() {
+            const menu = document.getElementById('mobileContextMenu');
+            if (!menu) return;
+
+            document.getElementById('mBtnMove').onclick = function(e) {
+                e.stopPropagation();
+                menu.style.display = 'none';
+                
+                bookedActions.push("이동");
+                updateTrueTracker();
+                
+                alert("🏃 체스 기물처럼 이동하고 싶은 바둑판의 칸(타일)을 터치하세요!");
+                isSelectingMoveTile = true;
+            };
+
+            document.getElementById('mBtnAttack').onclick = function(e) {
+                e.stopPropagation();
+                menu.style.display = 'none';
+                
+                bookedActions.push("공격");
+                updateTrueTracker();
+                
+                alert("⚔️ 공격을 내리꽂을 타겟 칸 또는 적 기물을 터치하세요!");
+                isSelectingAttackTile = true;
+            };
+        }
+
+        // 상단 백1, 백2 트래커 글씨 실시간 갱신 장치
+        function updateTrueTracker() {
+            const trackTxt = document.getElementById('trackTxt');
+            if (!trackTxt) return;
+
+            if (bookedActions.length === 0) {
+                trackTxt.innerHTML = `<b style='color:#aaa;'>기물 선택 대기 중</b>`;
+            } else if (bookedActions.length === 1) {
+                trackTxt.innerHTML = `<span style='color:#00ffcc; font-weight:bold;'>[백 1번]: ${bookedActions[0]} 설정</span> ➡️ <b style='color:#ffcc00;'>[2번 예약 대기]</b>`;
+            } else if (bookedActions.length === 2) {
+                trackTxt.innerHTML = `<span style='color:#00ffcc; font-weight:bold;'>[백 1번]: ${bookedActions[0]}</span> ➡️ <span style='color:#ff0055; font-weight:bold;'>[백 2번]: ${bookedActions[1]}</span>`;
+            }
+        }
+
+        // 행동 2개가 모두 등록되었을 때 시뮬레이션 후 기물을 '진짜' 그 칸으로 순간이동 시키는 핵심 코드
+        function checkTrueActionsCompletion() {
+            if (bookedActions.length >= 2) {
+                setTimeout(() => {
+                    const bot1 = Math.random() > 0.5 ? "이동" : "공격";
+                    const bot2 = bot1 === "이동" ? "공격" : "이동";
+
+                    let log = `⚡ [심리전 예약 교차 실행 발동!]\n\n`;
+                    log += `1️⃣ [백 1번]: 백선수 ${bookedActions[0]} 개시!\n`;
+                    log += `2️⃣ [흑 1번]: 흑선수(AI) ${bot1} 개시!\n`;
+                    log += `3️⃣ [백 2번]: 백선수 ${bookedActions[1]} 개시!\n`;
+                    log += `4️⃣ [흑 2번]: 흑선수(AI) ${bot2} 개시!\n\n`;
+                    
+                    if (reservedTargetTile) {
+                        log += `🎬 [실시간 전장 반영]: 예약 결과에 따라 백 진영 기물이 선택한 좌표로 진짜 이동합니다!`;
+                    } else {
+                        log += `📢 결과 보고: 명령 연산이 무사히 종료되었습니다.`;
+                    }
+
+                    alert(log);
+
+                    // 🔥 [핵심 기능]: 예약 실행 페이즈가 끝났으므로 기물을 선택했던 타일의 좌표로 실제 이동 연산 수행!
+                    if (reservedTargetTile && currentPieceData) {
+                        currentPieceData.mesh.position.x = reservedTargetTile.x;
+                        currentPieceData.mesh.position.z = reservedTargetTile.z;
+                        currentPieceData.mesh.position.y = 0.45; // 정확한 안착 높이 세팅
+                    }
+
+                    // 한 턴이 끝났으므로 깔끔하게 세션 리셋
+                    bookedActions = [];
+                    reservedTargetTile = null;
+                    currentPieceData = null;
+                    updateTrueTracker();
+
+                }, 300);
+            } else {
+                // 아직 행동을 하나만 골랐다면, 마저 2번째 행동(백2)을 완성할 수 있도록 파일 팝업 재소환
+                setTimeout(() => {
+                    if (currentPieceData) {
+                        const screenPos = currentPieceData.mesh.position.clone().project(camera);
+                        const x = (screenPos.x * .5 + .5) * window.innerWidth;
+                        const y = (screenPos.y * -.5 + .5) * window.innerHeight;
+                        const menu = document.getElementById('mobileContextMenu');
+                        if (menu) {
+                            menu.style.left = `${x + 25}px`;
+                            menu.style.top = `${y - 35}px`;
+                            menu.style.display = 'flex';
+                        }
+                    }
+                }, 450);
+            }
+        }
+    })();
+</script>
