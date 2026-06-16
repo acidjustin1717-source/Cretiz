@@ -1,239 +1,188 @@
 <style>
-    /* 턴 표시를 위한 전용 UI 스타일 추가 */
-    #turnIndicator {
-        position: absolute; top: 20px; right: 20px; font-size: 1.5rem;
-        color: #ffcc00; font-weight: bold; z-index: 100; pointer-events: none;
-        background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 8px;
-        border: 1px solid #ffcc00; display: none;
+    /* 짭체스 게임 전용 UI 대기실 */
+    #chessUiOverlay {
+        position: absolute; top: 20px; left: 20px; font-size: 1.2rem;
+        color: #00ffcc; z-index: 100; pointer-events: none;
+        background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px;
+        border: 1px solid #00ffcc; display: none; font-family: sans-serif;
     }
+    #chessUiOverlay h3 { color: #ffcc00; margin-bottom: 5px; }
+    .score-board { display: flex; gap: 20px; margin-top: 5px; font-size: 1rem; }
+    .score-white { color: #ffffff; }
+    .score-black { color: #ff3366; }
 </style>
-<div id="turnIndicator">내 턴 (플레이어 A)</div>
 
+<div id="chessUiOverlay">
+    <h3>Cretyz Tactical Chess</h3>
+    <div id="turnStatus">게임 준비 완료! (기물 배치 중)</div>
+    <div class="score-board">
+        <span class="score-white">백 진영 점수: <b id="scoreWhite">0</b> / 20</span>
+        <span class="score-black">흑 진영 점수: <b id="scoreBlack">0</b> / 20</span>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-    // 기존에 돌고 있던 2D/3D 액션 게임 루프나 인터벌이 있다면 안전하게 초기화
+    // 기존 액션게임이나 미니 보드게임 루프가 살아있다면 강제 종료
     if (typeof loginDetectInterval !== 'undefined') clearInterval(loginDetectInterval);
-    
-    let boardScene, boardCamera, boardRenderer;
-    let boardSquares = []; // 8x8 보드판 타일들
-    let playerPiece, enemyPiece; // 플레이어 말과 적 말
-    let currentTurn = 'player'; // 'player' 또는 'enemy' (턴제 제어용)
-    let selectedPiece = null;
-    let raycaster = new THREE.Raycaster();
-    let mouse = new THREE.Vector2();
+    if (typeof boardGameHookInterval !== 'undefined') clearInterval(boardGameHookInterval);
 
-    // 3D 보드게임 세상을 만드는 함수
-    function initBoardGame() {
-        // 기존 화면 초기화 (액션 게임용 요소들 숨기기/삭제)
+    let cScene, cCamera, cRenderer;
+    let chessBoard = []; // 8x8 판 배열
+    let allPieces = [];  // 현재 살아있는 모든 기물 배열
+
+    // 전역 점수 상태
+    let scores = { white: 0, black: 0 };
+
+    // 짭체스 8x8 무대 생성기
+    function startCretyzChess() {
+        // 기존 2D 캔버스 완전 삭제/숨김
         const canvas2D = document.getElementById('gameCanvas');
         if (canvas2D) canvas2D.style.display = 'none';
-        document.getElementById('turnIndicator').style.display = 'block';
+        document.getElementById('chessUiOverlay').style.display = 'block';
 
-        // 1. 3D 무대 및 카메라 구성
-        boardScene = new THREE.Scene();
-        boardScene.background = new THREE.Color(0x111118);
+        // 1. 3D 무대 및 스마트 탑뷰 카메라 구성
+        cScene = new THREE.Scene();
+        cScene.background = new THREE.Color(0x0a0a0f);
 
-        // 보드판을 비스듬히 내려다보는 쿼터뷰 카메라
-        boardCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        boardCamera.position.set(0, 12, 10);
-        boardCamera.lookAt(0, 0, 0);
+        cCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        cCamera.position.set(0, 14, 9); // 8x8 판을 한눈에 보게 카메라 높이 UP
+        cCamera.lookAt(0, 0, -1);
 
-        // 3D 화가 배치
-        boardRenderer = new THREE.WebGLRenderer({ antialias: true });
-        boardRenderer.setSize(window.innerWidth, window.innerHeight);
-        boardRenderer.domElement.style.position = 'absolute';
-        boardRenderer.domElement.style.top = '0';
-        boardRenderer.domElement.style.left = '0';
-        boardRenderer.domElement.style.zIndex = '10'; // 제일 위에 노출
-        document.body.appendChild(boardRenderer.domElement);
+        // 3D 화가 켜기
+        cRenderer = new THREE.WebGLRenderer({ antialias: true });
+        cRenderer.setSize(window.innerWidth, window.innerHeight);
+        cRenderer.domElement.style.position = 'absolute';
+        cRenderer.domElement.style.top = '0';
+        cRenderer.domElement.style.left = '0';
+        cRenderer.domElement.style.zIndex = '50'; // 화면 최상단 강제 점령
+        document.body.appendChild(cRenderer.domElement);
 
-        // 조명 추가
-        const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-        boardScene.add(ambient);
-        const point = new THREE.PointLight(0x00ffcc, 1, 100);
-        point.position.set(0, 10, 5);
-        boardScene.add(point);
+        // 조명 (네온 SF 체스판 느낌)
+        const ambLight = new THREE.AmbientLight(0xffffff, 0.4);
+        cScene.add(ambLight);
+        const dirLight1 = new THREE.DirectionalLight(0x00ffcc, 0.8);
+        dirLight1.position.set(5, 15, 5);
+        cScene.add(dirLight1);
+        const dirLight2 = new THREE.DirectionalLight(0xff0055, 0.4);
+        dirLight2.position.set(-5, 15, -5);
+        cScene.add(dirLight2);
 
-        // 2. 4x4 미니 보드판 생성 (격자 타일 배치)
-        const tileSize = 1.5;
-        for (let row = 0; row < 4; row++) {
-            for (let col = 0; col < 4; col++) {
-                const geo = new THREE.BoxGeometry(tileSize - 0.1, 0.2, tileSize - 0.1);
-                // 체스판처럼 번갈아가며 색상 지정
+        // 2. 정식 8x8 보드판 생성
+        const size = 1.2; // 타일 한 칸 크기
+        for (let row = 0; row < 8; row++) {
+            for (let col = 0; col < 8; col++) {
+                const geo = new THREE.BoxGeometry(size - 0.08, 0.15, size - 0.08);
                 const isEven = (row + col) % 2 === 0;
-                const mat = new THREE.MeshStandardMaterial({ 
-                    color: isEven ? 0x222530 : 0x3b3f54,
-                    roughness: 0.4
+                // 네온 그리드 스타일의 고급 재질
+                const mat = new THREE.MeshStandardMaterial({
+                    color: isEven ? 0x161922 : 0x282c3d,
+                    roughness: 0.5,
+                    metalness: 0.2
                 });
                 const tile = new THREE.Mesh(geo, mat);
-                // 중심을 기준으로 정렬하여 배치
-                tile.position.set((col - 1.5) * tileSize, 0, (row - 1.5) * tileSize);
-                // 타일의 행/열 정보를 오브젝트에 커스텀 데이터로 저장
-                tile.userData = { isTile: true, row: row, col: col };
-                boardScene.add(tile);
-                boardSquares.push(tile);
+                // 8x8 중앙 정렬 계산 배치
+                tile.position.set((col - 3.5) * size, 0, (row - 3.5) * size);
+                tile.userData = { isTile: true, row: row, col: col, hasWall: false };
+                cScene.add(tile);
+                chessBoard.push(tile);
             }
         }
 
-        // 3. 플레이어 말 (파란색 실린더) & 적의 말 (붉은색 콘) 생성
-        const pGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.8, 16);
-        const pMat = new THREE.MeshStandardMaterial({ color: 0x00aaff, metalness: 0.5 });
-        playerPiece = new THREE.Mesh(pGeo, pMat);
-        // 왼쪽 아래 칸 (0,0)에 배치
-        setPiecePosition(playerPiece, 0, 0);
-        playerPiece.userData = { isPlayer: true, row: 0, col: 0 };
-        boardScene.add(playerPiece);
+        // 3. 승현이 기획서 기반 기물 스폰 (백진영: row 0~1, 흑진영: row 6~7)
+        // 백진영 (유저 팀) 세팅
+        spawnRowPieces('white', 0, 1);
+        // 흑진영 (상대 팀) 세팅
+        spawnRowPieces('black', 7, 6);
 
-        const eGeo = new THREE.ConeGeometry(0.4, 0.8, 16);
-        const eMat = new THREE.MeshStandardMaterial({ color: 0xff3366, metalness: 0.5 });
-        enemyPiece = new THREE.Mesh(eGeo, eMat);
-        // 오른쪽 위 칸 (3,3)에 배치
-        setPiecePosition(enemyPiece, 3, 3);
-        enemyPiece.userData = { isEnemy: true, row: 3, col: 3 };
-        boardScene.add(enemyPiece);
+        document.getElementById('turnStatus').innerText = "행동 예약 대기 중... (백선수 선공)";
 
-        // 4. 마우스 클릭으로 말 움직이기 이벤트 등록
-        boardRenderer.domElement.addEventListener('click', onBoardClick);
+        // 4. 애니메이션 루프 구동
+        function animateChess() {
+            requestAnimationFrame(animateChess);
+            
+            // 기물들 둠칫둠칫 약한 회전 효과로 살아있는 느낌 주기
+            allPieces.forEach(p => {
+                if (p.mesh) p.mesh.rotation.y += 0.005;
+            });
 
-        // 5. 렌더링 루프
-        function renderBoard() {
-            requestAnimationFrame(renderBoard);
-            // 말들이 살아있는 것처럼 아주 살짝씩 회전
-            if (playerPiece) playerPiece.rotation.y += 0.01;
-            if (enemyPiece) enemyPiece.rotation.y += 0.01;
-            boardRenderer.render(boardScene, boardCamera);
+            cRenderer.render(cScene, cCamera);
         }
-        renderBoard();
+        animateChess();
     }
 
-    // 말을 특정 행/열 타일 위로 순간이동 시키는 헬퍼 함수
-    function setPiecePosition(piece, row, col) {
-        const tileSize = 1.5;
-        piece.position.set((col - 1.5) * tileSize, 0.5, (row - 1.5) * tileSize);
-        piece.userData.row = row;
-        piece.userData.col = col;
-    }
+    // 진영별 기물들을 스폰하는 내부 마스터 함수
+    function spawnRowPieces(team, backRow, pawnRow) {
+        const size = 1.2;
+        const colorHex = (team === 'white') ? 0x00aaff : 0xff3366; // 백: 블루네온, 흑: 핑크네온
 
-    // 보드판 클릭 처리 (턴제 핵심 로직)
-    function onBoardClick(event) {
-        if (currentTurn !== 'player') return; // 내 턴이 아니면 클릭 거부
+        // 폰 8마리 쫙 깔기 (승현이 기획: HP 1, DMG 1, SCORE 1)
+        for (let col = 0; col < 8; col++) {
+            const pGeo = new THREE.CylinderGeometry(0.3, 0.35, 0.5, 12);
+            const pMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.3 });
+            const pMesh = new THREE.Mesh(pGeo, pMat);
+            pMesh.position.set((col - 3.5) * size, 0.35, (pawnRow - 3.5) * size);
+            cScene.add(pMesh);
 
-        // 마우스 클릭 위치를 3D 공간 좌표로 변환 (Raycasting)
-        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-        raycaster.setFromCamera(mouse, boardCamera);
+            allPieces.push({
+                mesh: pMesh, team: team, type: 'pawn', isSuper: false, isHero: false,
+                row: pawnRow, col: col, maxHp: 1, hp: 1, dmg: 1, score: 1, isStunned: false
+            });
+        }
+
+        // 뒷줄 정예 기물 일렬 배치 규칙 (룩, 나이트, 비숍, 퀸, 킹, 비숍, 나이트, 룩)
+        const backTypes = ['look', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'look'];
         
-        const intersects = raycaster.intersectObjects(boardScene.children);
+        // 기물 종류별 스펙 데이터 매핑 데이터베이스
+        const specs = {
+            king:   { hp: 5, dmg: 1, score: 5, geo: new THREE.BoxGeometry(0.5, 0.9, 0.5) },
+            queen:  { hp: 3, dmg: 2, score: 4, geo: new THREE.CylinderGeometry(0.2, 0.4, 0.8, 8) },
+            look:   { hp: 3, dmg: 1, score: 3, geo: new THREE.BoxGeometry(0.45, 0.7, 0.45) },
+            knight: { hp: 3, dmg: 2, score: 3, geo: new THREE.ConeGeometry(0.35, 0.8, 4) },
+            bishop: { hp: 1, dmg: 3, score: 3, geo: new THREE.CylinderGeometry(0.1, 0.35, 0.7, 16) }
+        };
 
-        if (intersects.length > 0) {
-            const clickedObj = intersects[0].object;
+        for (let col = 0; col < 8; col++) {
+            const type = backTypes[col];
+            const spec = specs[type];
 
-            // 1. 내 말을 클릭했을 때 -> 선택 상태로 전환
-            if (clickedObj.userData.isPlayer) {
-                selectedPiece = clickedObj;
-                document.getElementById('turnIndicator').innerText = "이동할 칸을 선택하세요";
-                document.getElementById('turnIndicator').style.color = "#00ffcc";
-                return;
-            }
+            const mat = new THREE.MeshStandardMaterial({ color: colorHex, metalness: 0.4, roughness: 0.2 });
+            const mesh = new THREE.Mesh(spec.geo, mat);
+            mesh.position.set((col - 3.5) * size, 0.5, (backRow - 3.5) * size);
+            cScene.add(mesh);
 
-            // 2. 말을 선택한 상태에서 타일을 클릭했을 때 -> 이동 검사
-            if (selectedPiece && clickedObj.userData.isTile) {
-                const targetRow = clickedObj.userData.row;
-                const targetCol = clickedObj.userData.col;
-                
-                const currRow = selectedPiece.userData.row;
-                const currCol = selectedPiece.userData.col;
-
-                // 상하좌우 1칸씩만 이동 가능한 규칙 (턴제 제약 조건)
-                const rowDist = Math.abs(targetRow - currRow);
-                const colDist = Math.abs(targetCol - currCol);
-
-                if ((rowDist === 1 && colDist === 0) || (rowDist === 0 && colDist === 1)) {
-                    // 말 이동시키기
-                    setPiecePosition(selectedPiece, targetRow, targetCol);
-                    selectedPiece = null;
-
-                    // 승리 조건 체크 (상대방 말과 같은 칸에 도달하면 승리)
-                    if (targetRow === enemyPiece.userData.row && targetCol === enemyPiece.userData.col) {
-                        alert("🎉 축하합니다! 적을 잡아서 승리했습니다!");
-                        location.reload();
-                        return;
-                    }
-
-                    // 플레이어 턴 종료 -> 적(AI) 턴으로 전환
-                    currentTurn = 'enemy';
-                    document.getElementById('turnIndicator').innerText = "적 컴퓨터가 생각 중...";
-                    document.getElementById('turnIndicator').style.color = "#ff3366";
-
-                    // 1초 뒤 컴퓨터가 자동으로 움직이게 타이머 작동
-                    setTimeout(enemyTurnLogic, 1000);
-                } else {
-                    alert("상하좌우로 딱 1칸만 움직일 수 있습니다!");
-                }
-            }
+            allPieces.push({
+                mesh: mesh, team: team, type: type,
+                row: backRow, col: col, maxHp: spec.hp, hp: spec.hp, dmg: spec.dmg, score: spec.score,
+                isStunned: false, ammo: (type==='queen')? 2 : (type==='bishop')? 1 : 0, needReload: false
+            });
         }
     }
 
-    // 간단한 적 인공지능(AI) 턴 로직
-    function enemyTurnLogic() {
-        const eRow = enemyPiece.userData.row;
-        const eCol = enemyPiece.userData.col;
-        const pRow = playerPiece.userData.row;
-        const pCol = playerPiece.userData.col;
-
-        let nextRow = eRow;
-        let nextCol = eCol;
-
-        // 플레이어 캐릭터가 있는 방향을 추적해서 1칸 다가오는 인공지능 규칙
-        if (eRow !== pRow) {
-            nextRow += (pRow > eRow) ? 1 : -1;
-        } else if (eCol !== pCol) {
-            nextCol += (pCol > eCol) ? 1 : -1;
-        }
-
-        // 범위 이탈 방지 가드
-        nextRow = Math.max(0, Math.min(3, nextRow));
-        nextCol = Math.max(0, Math.min(3, nextCol));
-
-        // 컴퓨터 말 이동
-        setPiecePosition(enemyPiece, nextRow, nextCol);
-
-        // 패배 조건 체크
-        if (nextRow === playerPiece.userData.row && nextCol === playerPiece.userData.col) {
-            alert("💀 으악! 컴퓨터에게 잡혔습니다. 패배!");
-            location.reload();
-            return;
-        }
-
-        // 적 턴 종료 -> 다시 플레이어 턴으로 복귀
-        currentTurn = 'player';
-        document.getElementById('turnIndicator').innerText = "내 턴 (플레이어 A)";
-        document.getElementById('turnIndicator').style.color = "#ffcc00";
-    }
-
-    // 기존 로그인 이벤트 인터셉터에 새 보드게임 연결하기
-    const boardGameHookInterval = setInterval(() => {
+    // 짭체스 강제 연결 고리 인터셉터
+    const chessHookInterval = setInterval(() => {
         const loginBtn = document.getElementById('mainBtn') || document.getElementById('authBtn');
         const loginInput = document.getElementById('myId') || document.getElementById('userIdInput');
         const loginPw = document.getElementById('myPw') || document.getElementById('userPwInput');
 
         if (loginBtn) {
-            clearInterval(boardGameHookInterval);
+            clearInterval(chessHookInterval);
             loginBtn.addEventListener('click', () => {
                 const id = loginInput.value.trim();
                 const pw = loginPw.value.trim();
                 if (id && pw && (localStorage.getItem('game_user_' + id) === pw || localStorage.getItem('user_' + id) === pw)) {
-                    // 로그인 장벽 통과 시 액션 게임 대신 3D 턴제 보드게임 실행!
-                    setTimeout(initBoardGame, 200);
+                    // 로그인 성공 시 짭체스 월드로 무대 강제 변환 작동
+                    setTimeout(startCretyzChess, 200);
                 }
             });
         }
     }, 100);
 
     window.addEventListener('resize', () => {
-        if (boardCamera && boardRenderer) {
-            boardCamera.aspect = window.innerWidth / window.innerHeight;
-            boardCamera.updateProjectionMatrix();
-            boardRenderer.setSize(window.innerWidth, window.innerHeight);
+        if (cCamera && cRenderer) {
+            cCamera.aspect = window.innerWidth / window.innerHeight;
+            cCamera.updateProjectionMatrix();
+            cRenderer.setSize(window.innerWidth, window.innerHeight);
         }
     });
 </script>
