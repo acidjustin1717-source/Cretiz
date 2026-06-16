@@ -232,3 +232,172 @@
 </body>
 </html>
 
+<style>
+    /* 기물 선택 시 화면 우측에 나타날 전술 예약 컨트롤 패널 UI */
+    #actionPanel {
+        position: absolute; top: 20px; right: 20px; width: 260px;
+        background: rgba(15, 15, 25, 0.9); border: 2px solid #00ffcc;
+        border-radius: 10px; padding: 20px; color: #fff; z-index: 2000;
+        display: none; box-shadow: 0 0 15px rgba(0,255,204,0.3);
+    }
+    #actionPanel h4 { color: #ffcc00; margin-bottom: 10px; font-size: 1.1rem; text-align: center; }
+    .ui-btn {
+        width: 100%; padding: 10px; margin: 6px 0; border: 1px solid rgba(255,255,255,0.2);
+        background: #1f2336; color: white; border-radius: 5px; cursor: pointer; font-weight: bold;
+    }
+    .ui-btn:hover { background: #2b314d; border-color: #00ffcc; }
+    .ready-btn { background: #00ffcc !important; color: #000 !important; font-size: 1.1rem; margin-top: 15px; }
+    .ready-btn:hover { background: #00ccaa !important; }
+    .status-text { font-size: 0.85rem; color: #aaa; margin-top: 4px; text-align: center; }
+</style>
+
+<div id="actionPanel">
+    <h4 id="selectedPieceName">선택된 기물: 없음</h4>
+    <div style="border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 10px; padding-bottom: 5px;">
+        <p style="font-size:0.9rem; color:#00ffcc;">행동 1: <span id="slots1" style="color:#fff;">대기</span></p>
+        <p style="font-size:0.9rem; color:#00ffcc;">행동 2: <span id="slots2" style="color:#fff;">대기</span></p>
+    </div>
+    <button class="ui-btn" id="btnMove">🏃 이동 명령</button>
+    <button class="ui-btn" id="btnAttack">⚔️ 공격 / 특수능력</button>
+    <button class="ui-btn ready-btn" id="btnReady">턴 예약 완료 (READY)</button>
+    <div class="status-text" id="slotStatus">기물을 누르고 행동 2개를 순서대로 정하세요!</div>
+</div>
+
+<script>
+    // 3D 공간 상의 마우스 클릭을 가로채기 위한 레이캐스터 변수 바인딩
+    let raycaster = new THREE.Raycaster();
+    let mouse = new THREE.Vector2();
+    let selectedActivePiece = null; // 현재 마우스로 선택한 내 기물 데이터
+    
+    // 유저가 임시로 예약 중인 행동 슬롯 데이터 저장소
+    let currentReservations = { piece: null, act1: null, act2: null }; 
+
+    // 시스템 가동 루프 인터벌 (상단 엔진이 완전히 부팅되었는지 감지)
+    const initActionEngineInterval = setInterval(() => {
+        if (typeof renderer !== 'undefined' && typeof camera !== 'undefined' && typeof scene !== 'undefined') {
+            clearInterval(initActionEngineInterval);
+            
+            // 3D 화가 화면에 마우스 클릭 이벤트 바인딩
+            renderer.domElement.addEventListener('click', onPieceSelectClick);
+            
+            // UI 버튼들의 기능 연결
+            setupUiButtonEvents();
+            console.log("Tactical Reservation UI Engine fully merged.");
+        }
+    }, 200);
+
+    // 마우스로 3D 기물을 클릭했을 때 호출되는 핵심 타겟팅 함수
+    function onPieceSelectClick(event) {
+        // 화면 좌표를 3D 수학적 좌표(-1 ~ +1)로 정규화 변환
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+
+        // 무대 위에 존재하는 모든 3D 오브젝트들 중 클릭된 녀석 필터링
+        const intersects = raycaster.intersectObjects(scene.children);
+        
+        if (intersects.length > 0) {
+            const clickedObject = intersects[0].object;
+            
+            // 클릭한 오브젝트가 우리가 생성한 기물 부대 리스트에 존재하는지 탐색
+            // (tip: 전역 배열 renderPieces에 담긴 3D 메쉬와 대조)
+            if (renderPieces.includes(clickedObject)) {
+                // 임시로 우선 기물 탐색 매핑 (이번 버전에서는 인덱스로 타입 유추)
+                const pieceIdx = renderPieces.indexOf(clickedObject);
+                const isWhite = pieceIdx < 16; // 0~15번은 백진영, 16~31번은 흑진영
+                
+                // 지금은 백선수(플레이어) 턴이므로 백진영 기물만 선택 가능하게 한정
+                if (isWhite) {
+                    let typeName = "폰";
+                    if(pieceIdx >= 8) {
+                        const backNames = ["룩", "나이트", "비숍", "퀸", "킹", "비숍", "나이트", "룩"];
+                        typeName = backNames[pieceIdx - 8];
+                    }
+
+                    selectedActivePiece = { mesh: clickedObject, index: pieceIdx, type: typeName, team: 'white' };
+                    currentReservations.piece = selectedActivePiece;
+                    
+                    // 예약 창 활성화 및 텍스트 갱신
+                    document.getElementById('actionPanel').style.display = 'block';
+                    document.getElementById('selectedPieceName').innerText = `선택된 기물: 백 [${typeName}]`;
+                    resetSlots();
+                } else {
+                    alert("지금은 백(BLUE) 진영의 행동 예약 턴입니다! 내 기물을 선택하세요.");
+                }
+            }
+        }
+    }
+
+    function setupUiButtonEvents() {
+        const btnMove = document.getElementById('btnMove');
+        const btnAttack = document.getElementById('btnAttack');
+        const btnReady = document.getElementById('btnReady');
+
+        // 이동 예약 슬롯 채우기
+        btnMove.addEventListener('click', () => {
+            if (!currentReservations.act1) {
+                currentReservations.act1 = "이동";
+                document.getElementById('slots1').innerText = "🏃 이동";
+            } else if (!currentReservations.act2) {
+                currentReservations.act2 = "이동";
+                document.getElementById('slots2').innerText = "🏃 이동";
+                document.getElementById('slotStatus').innerText = "행동 2개 예약 완료! READY를 누르세요.";
+            }
+        });
+
+        // 공격 예약 슬롯 채우기
+        btnAttack.addEventListener('click', () => {
+            if (!currentReservations.act1) {
+                currentReservations.act1 = "공격";
+                document.getElementById('slots1').innerText = "⚔️ 공격/특수";
+            } else if (!currentReservations.act2) {
+                currentReservations.act2 = "공격";
+                document.getElementById('slots2').innerText = "⚔️ 공격/특수";
+                document.getElementById('slotStatus').innerText = "행동 2개 예약 완료! READY를 누르세요.";
+            }
+        });
+
+        // 준비 완료 버튼 클릭 시 심리전 시뮬레이션 발동! (백1 -> 흑1 -> 백2 -> 흑2)
+        btnReady.addEventListener('click', () => {
+            if (!currentReservations.act1 || !currentReservations.act2) {
+                alert("반드시 2가지 행동을 모두 예약해야 턴을 마칠 수 있습니다! (승현이 룰북 규칙)");
+                return;
+            }
+
+            // [승현이 룰북 핵심 가동] 
+            // 플레이어가 준비를 누르면 컴퓨터(흑진영)도 랜덤으로 1마리를 골라 행동 2개를 즉시 "예약"한 뒤,
+            // 백1 -> 흑1 -> 백2 -> 흑2 순서로 순차 교차 연쇄 실행 시뮬레이션을 띄워줍니다!
+            alert(`⚡ 전술 예약이 완료되었습니다!\n[${currentReservations.piece.type}] 기물이 [${currentReservations.act1}] 후 [${currentReservations.act2}]를 실행합니다.\n상대방(컴퓨터)의 심리 예측 결과를 오픈합니다!`);
+            
+            simulateTacticalTurn();
+        });
+    }
+
+    function resetSlots() {
+        currentReservations.act1 = null;
+        currentReservations.act2 = null;
+        document.getElementById('slots1').innerText = "대기";
+        document.getElementById('slots2').innerText = "대기";
+        document.getElementById('slotStatus').innerText = "이동과 공격 버튼을 하나씩 눌러 예약을 채우세요.";
+    }
+
+    // 승현이의 예약 교차 연산 시스템 엔진 시뮬레이터
+    function simulateTacticalTurn() {
+        // 컴퓨터(흑진영 폰 16번 기물)의 심리 예측 행동 강제 생성
+        const botAct1 = Math.random() > 0.5 ? "이동" : "공격";
+        const botAct2 = botAct1 === "이동" ? "공격" : "이동";
+
+        let log = `[교차 실행 로그]\n\n`;
+        log += `▶️ 1단계 (백선수 1번 행동): 백 [${currentReservations.piece.type}]이(가) [${currentReservations.act1}]을 실행했습니다!\n`;
+        log += `▶️ 2단계 (흑선수 1번 행동): 흑 [폰]이(가) [${botAct1}]을 실행했습니다!\n`;
+        log += `▶️ 3단계 (백선수 2번 행동): 백 [${currentReservations.piece.type}]이(가) [${currentReservations.act2}]을 실행했습니다!\n`;
+        log += `▶️ 4단계 (흑선수 2번 행동): 흑 [폰]이(가) [${botAct2}]을 실행했습니다!\n\n`;
+        log += `💡 [동시 충돌 연산 결과]: 서로 동선이 겹치지 않아 정상 수행되었습니다!\n(만약 같은 칸에 도달했다면 승현이 룰에 의해 원래자리로 튕기고 1턴 기절 처리됩니다.)`;
+
+        alert(log);
+        
+        // 시뮬레이션 종료 후 패널 닫기 및 턴 초기화
+        document.getElementById('actionPanel').style.display = 'none';
+        resetSlots();
+    }
+</script>
