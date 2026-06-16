@@ -123,3 +123,21 @@ whiteAction2();
 blackAction2();
 
 }
+let selectedCell = null;
+
+document.querySelectorAll(".cell").forEach(cell => {
+
+    cell.addEventListener("click", () => {
+
+        if(selectedCell){
+            selectedCell.style.outline = "";
+        }
+
+        selectedCell = cell;
+
+        cell.style.outline = "4px solid red";
+
+        console.log("칸 선택됨");
+    });
+
+});
